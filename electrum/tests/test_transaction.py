@@ -1,5 +1,4 @@
 from electrum import transaction
-from electrum.transaction import TxOutputForUI, tx_from_str
 from electrum.bitcoin import TYPE_ADDRESS
 from electrum.keystore import xpubkey_to_address
 from electrum.util import bh2u, bfh
@@ -87,7 +86,8 @@ class TestTransaction(SequentialTestCase):
         self.assertEqual(tx.deserialize(), None)
 
         self.assertEqual(tx.as_dict(), {'hex': unsigned_blob, 'complete': False, 'final': True})
-        self.assertEqual(tx.get_outputs_for_UI(), [TxOutputForUI('14CHYaaByjJZpx4oHBpfDMdqhTyXnZ3kVs', 1000000)])
+        self.assertEqual(tx.get_outputs(), [('14CHYaaByjJZpx4oHBpfDMdqhTyXnZ3kVs', 1000000)])
+        self.assertEqual(tx.get_output_addresses(), ['14CHYaaByjJZpx4oHBpfDMdqhTyXnZ3kVs'])
 
         self.assertTrue(tx.has_address('14CHYaaByjJZpx4oHBpfDMdqhTyXnZ3kVs'))
         self.assertTrue(tx.has_address('1446oU3z268EeFgfcwJv6X2VBXHfoYxfuD'))
@@ -171,29 +171,10 @@ class TestTransaction(SequentialTestCase):
         tx = transaction.Transaction(v2_blob)
         self.assertEqual(tx.txid(), "b97f9180173ab141b61b9f944d841e60feec691d6daab4d4d932b24dd36606fe")
 
-    def test_tx_from_str(self):
-        # json dict
-        self.assertEqual('020000000001012005273af813ba23b0c205e4b145e525c280dd876e061f35bff7db9b2e0043640100000000fdffffff02d885010000000000160014e73f444b8767c84afb46ef4125d8b81d2542a53d00e1f5050000000017a914052ed032f5c74a636ed5059611bb90012d40316c870247304402200c628917673d75f05db893cc377b0a69127f75e10949b35da52aa1b77a14c350022055187adf9a668fdf45fc09002726ba7160e713ed79dddcd20171308273f1a2f1012103cb3e00561c3439ccbacc033a72e0513bcfabff8826de0bc651d661991ade6171049e1600',
-                         tx_from_str("""{
-                                        "complete": true,
-                                        "final": false,
-                                        "hex": "020000000001012005273af813ba23b0c205e4b145e525c280dd876e061f35bff7db9b2e0043640100000000fdffffff02d885010000000000160014e73f444b8767c84afb46ef4125d8b81d2542a53d00e1f5050000000017a914052ed032f5c74a636ed5059611bb90012d40316c870247304402200c628917673d75f05db893cc377b0a69127f75e10949b35da52aa1b77a14c350022055187adf9a668fdf45fc09002726ba7160e713ed79dddcd20171308273f1a2f1012103cb3e00561c3439ccbacc033a72e0513bcfabff8826de0bc651d661991ade6171049e1600"
-                                    }
-                                    """)
-        )
-        # raw hex
-        self.assertEqual('020000000001012005273af813ba23b0c205e4b145e525c280dd876e061f35bff7db9b2e0043640100000000fdffffff02d885010000000000160014e73f444b8767c84afb46ef4125d8b81d2542a53d00e1f5050000000017a914052ed032f5c74a636ed5059611bb90012d40316c870247304402200c628917673d75f05db893cc377b0a69127f75e10949b35da52aa1b77a14c350022055187adf9a668fdf45fc09002726ba7160e713ed79dddcd20171308273f1a2f1012103cb3e00561c3439ccbacc033a72e0513bcfabff8826de0bc651d661991ade6171049e1600',
-                         tx_from_str('020000000001012005273af813ba23b0c205e4b145e525c280dd876e061f35bff7db9b2e0043640100000000fdffffff02d885010000000000160014e73f444b8767c84afb46ef4125d8b81d2542a53d00e1f5050000000017a914052ed032f5c74a636ed5059611bb90012d40316c870247304402200c628917673d75f05db893cc377b0a69127f75e10949b35da52aa1b77a14c350022055187adf9a668fdf45fc09002726ba7160e713ed79dddcd20171308273f1a2f1012103cb3e00561c3439ccbacc033a72e0513bcfabff8826de0bc651d661991ade6171049e1600'))
-        # base43
-        self.assertEqual('020000000001012005273af813ba23b0c205e4b145e525c280dd876e061f35bff7db9b2e0043640100000000fdffffff02d885010000000000160014e73f444b8767c84afb46ef4125d8b81d2542a53d00e1f5050000000017a914052ed032f5c74a636ed5059611bb90012d40316c870247304402200c628917673d75f05db893cc377b0a69127f75e10949b35da52aa1b77a14c350022055187adf9a668fdf45fc09002726ba7160e713ed79dddcd20171308273f1a2f1012103cb3e00561c3439ccbacc033a72e0513bcfabff8826de0bc651d661991ade6171049e1600',
-                         tx_from_str('64XF-8+PM6*4IYN-QWW$B2QLNW+:C8-$I$-+T:L.6DKXTSWSFFONDP1J/MOS3SPK0-SYVW38U9.3+A1/*2HTHQTJGP79LVEK-IITQJ1H.C/X$NSOV$8DWR6JAFWXD*LX4-EN0.BDOF+PPYPH16$NM1H.-MAA$V1SCP0Q.6Y5FR822S6K-.5K5F.Z4Q:0SDRG-4GEBLAO4W9Z*H-$1-KDYAFOGF675W0:CK5M1LT92IG:3X60P3GKPM:X2$SP5A7*LT9$-TTEG0/DRZYV$7B4ADL9CVS5O7YG.J64HLZ24MVKO/-GV:V.T/L$D3VQ:MR8--44HK8W'))
-
     def test_get_address_from_output_script(self):
         # the inverse of this test is in test_bitcoin: test_address_to_script
         addr_from_script = lambda script: transaction.get_address_from_output_script(bfh(script))
         ADDR = transaction.TYPE_ADDRESS
-        PUBKEY = transaction.TYPE_PUBKEY
-        SCRIPT = transaction.TYPE_SCRIPT
 
         # bech32 native segwit
         # test vectors from BIP-0173
@@ -201,28 +182,14 @@ class TestTransaction(SequentialTestCase):
         self.assertEqual((ADDR, 'bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7k7grplx'), addr_from_script('5128751e76e8199196d454941c45d1b3a323f1433bd6751e76e8199196d454941c45d1b3a323f1433bd6'))
         self.assertEqual((ADDR, 'bc1sw50qa3jx3s'), addr_from_script('6002751e'))
         self.assertEqual((ADDR, 'bc1zw508d6qejxtdg4y5r3zarvaryvg6kdaj'), addr_from_script('5210751e76e8199196d454941c45d1b3a323'))
-        # almost but not quite
-        self.assertEqual((SCRIPT, '0013751e76e8199196d454941c45d1b3a323f1433b'), addr_from_script('0013751e76e8199196d454941c45d1b3a323f1433b'))
 
         # base58 p2pkh
         self.assertEqual((ADDR, '14gcRovpkCoGkCNBivQBvw7eso7eiNAbxG'), addr_from_script('76a91428662c67561b95c79d2257d2a93d9d151c977e9188ac'))
         self.assertEqual((ADDR, '1BEqfzh4Y3zzLosfGhw1AsqbEKVW6e1qHv'), addr_from_script('76a914704f4b81cadb7bf7e68c08cd3657220f680f863c88ac'))
-        # almost but not quite
-        self.assertEqual((SCRIPT, '76a9130000000000000000000000000000000000000088ac'), addr_from_script('76a9130000000000000000000000000000000000000088ac'))
 
         # base58 p2sh
         self.assertEqual((ADDR, '35ZqQJcBQMZ1rsv8aSuJ2wkC7ohUCQMJbT'), addr_from_script('a9142a84cf00d47f699ee7bbc1dea5ec1bdecb4ac15487'))
         self.assertEqual((ADDR, '3PyjzJ3im7f7bcV724GR57edKDqoZvH7Ji'), addr_from_script('a914f47c8954e421031ad04ecd8e7752c9479206b9d387'))
-        # almost but not quite
-        self.assertEqual((SCRIPT, 'a912f47c8954e421031ad04ecd8e7752c947920687'), addr_from_script('a912f47c8954e421031ad04ecd8e7752c947920687'))
-
-        # p2pk
-        self.assertEqual((PUBKEY, '0289e14468d94537493c62e2168318b568912dec0fb95609afd56f2527c2751c8b'), addr_from_script('210289e14468d94537493c62e2168318b568912dec0fb95609afd56f2527c2751c8bac'))
-        self.assertEqual((PUBKEY, '045485b0b076848af1209e788c893522a90f3df77c1abac2ca545846a725e6c3da1f7743f55a1bc3b5f0c7e0ee4459954ec0307022742d60032b13432953eb7120'), addr_from_script('41045485b0b076848af1209e788c893522a90f3df77c1abac2ca545846a725e6c3da1f7743f55a1bc3b5f0c7e0ee4459954ec0307022742d60032b13432953eb7120ac'))
-        # almost but not quite
-        self.assertEqual((SCRIPT, '200289e14468d94537493c62e2168318b568912dec0fb95609afd56f2527c2751cac'), addr_from_script('200289e14468d94537493c62e2168318b568912dec0fb95609afd56f2527c2751cac'))
-        self.assertEqual((SCRIPT, '210589e14468d94537493c62e2168318b568912dec0fb95609afd56f2527c2751c8bac'), addr_from_script('210589e14468d94537493c62e2168318b568912dec0fb95609afd56f2527c2751c8bac'))
-
 
 #####
 
@@ -836,11 +803,6 @@ class TestTransactionTestnet(TestCaseForTestnet):
     def test_txid_partial_segwit_p2wpkh_p2sh_mixed_outputs(self):
         raw_tx = '45505446ff00010000000001011dcac788f24b84d771b60c44e1f9b6b83429e50f06e1472d47241922164013b00100000017160014801d28ca6e2bde551112031b6cb75de34f10851ffdffffff0440420f00000000001600140f9de573bc679d040e763d13f0250bd03e625f6fc0c62d000000000017a9142899f6484e477233ce60072fc185ef4c1f2c654487809698000000000017a914d40f85ba3c8fa0f3615bcfa5d6603e36dfc613ef87712d19040000000017a914e38c0cffde769cb65e72cda1c234052ae8d2254187feffffffff6ad1ee040000000000000201ff53ff044a5262033601222e800000001618aa51e49a961f63fd111f64cd4a7e792c1d7168be7a07703de505ebed2cf70286ebbe755767adaa5835f4d78dec1ee30849d69eacfe80b7ee6b1585279536c301000c000f391400'
         txid = 'ba5c88e07a4025a39ad3b85247cbd4f556a70d6312b18e04513c7cec9d45d6ac'
-        self._run_naive_tests_on_tx(raw_tx, txid)
-
-    def test_txid_partial_issue_5366(self):
-        raw_tx = '45505446ff000200000000010127523d70642dabd999fb43191ff6763f5b04150ba4cf38d2cfb53edf6a40ac4f0100000000fdffffff013286010000000000160014e79c7ac0b390a9caf52dc002e1095a5fbc042a18feffffffffa08601000000000000000201ff57ff045f1cf60157e9eb7a8000000038fa0b3a9c155ff3390ca0d639783d97af3b3bf66ebb69a31dfe8317fae0a7fe0324bc048fc0002253dfec9d6299711d708175f950ecee8e09db3518a5685741830000ffffcf01010043281700'
-        txid = 'a0c159616073dc7a4a482092dab4e8516c83dddb769b65919f23f6df63d33eb8'
         self._run_naive_tests_on_tx(raw_tx, txid)
 
 # end partial txns <---

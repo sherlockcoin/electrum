@@ -12,10 +12,7 @@ from ctypes import (
 
 import ecdsa
 
-from .logging import get_logger
-
-
-_logger = get_logger(__name__)
+from .util import print_stderr, print_error
 
 
 SECP256K1_FLAGS_TYPE_MASK = ((1 << 8) - 1)
@@ -47,7 +44,7 @@ def load_library():
 
     secp256k1 = ctypes.cdll.LoadLibrary(library_path)
     if not secp256k1:
-        _logger.warning('libsecp256k1 library failed to load')
+        print_stderr('[ecc] warning: libsecp256k1 library failed to load')
         return None
 
     try:
@@ -89,10 +86,11 @@ def load_library():
         if r:
             return secp256k1
         else:
-            _logger.warning('secp256k1_context_randomize failed')
+            print_stderr('[ecc] warning: secp256k1_context_randomize failed')
             return None
     except (OSError, AttributeError):
-        _logger.warning('libsecp256k1 library was found and loaded but there was an error when using it')
+        #traceback.print_exc(file=sys.stderr)
+        print_stderr('[ecc] warning: libsecp256k1 library was found and loaded but there was an error when using it')
         return None
 
 
@@ -186,9 +184,9 @@ def _prepare_monkey_patching_of_python_ecdsa_internals_with_libsecp256k1():
 
 def do_monkey_patching_of_python_ecdsa_internals_with_libsecp256k1():
     if not _libsecp256k1:
-        # FIXME logging 'verbosity' is not yet initialised
-        _logger.info('libsecp256k1 library not available, falling back to python-ecdsa. '
-                     'This means signing operations will be slower.')
+        # FIXME print_error will always print as 'verbosity' is not yet initialised
+        print_error('[ecc] info: libsecp256k1 library not available, falling back to python-ecdsa. '
+                    'This means signing operations will be slower.')
         return
     if not _patched_functions.prepared_to_patch:
         raise Exception("can't patch python-ecdsa without preparations")
@@ -220,5 +218,6 @@ try:
     _libsecp256k1 = load_library()
 except:
     _libsecp256k1 = None
+    #traceback.print_exc(file=sys.stderr)
 
 _prepare_monkey_patching_of_python_ecdsa_internals_with_libsecp256k1()

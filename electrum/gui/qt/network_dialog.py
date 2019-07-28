@@ -24,26 +24,18 @@
 # SOFTWARE.
 
 import socket
-import time
-from enum import IntEnum
-from typing import Tuple
 
-from PyQt5.QtCore import Qt, pyqtSignal, QThread
-from PyQt5.QtWidgets import (QTreeWidget, QTreeWidgetItem, QMenu, QGridLayout, QComboBox,
-                             QLineEdit, QDialog, QVBoxLayout, QHeaderView, QCheckBox,
-                             QTabWidget, QWidget, QLabel)
-from PyQt5.QtGui import QFontMetrics
+from PyQt5.QtGui import *
+from PyQt5.QtCore import *
+from PyQt5.QtWidgets import *
+import PyQt5.QtCore as QtCore
 
 from electrum.i18n import _
 from electrum import constants, blockchain
+from electrum.util import print_error
 from electrum.interface import serialize_server, deserialize_server
-from electrum.network import Network
-from electrum.logging import get_logger
 
-from .util import Buttons, CloseButton, HelpButton, read_QIcon, char_width_in_lineedit
-
-
-_logger = get_logger(__name__)
+from .util import *
 
 protocol_names = ['TCP', 'SSL']
 protocol_letters = 'ts'
@@ -52,7 +44,7 @@ class NetworkDialog(QDialog):
     def __init__(self, network, config, network_updated_signal_obj):
         QDialog.__init__(self)
         self.setWindowTitle(_('Network'))
-        self.setMinimumSize(500, 300)
+        self.setMinimumSize(500, 20)
         self.nlayout = NetworkChoiceLayout(network, config)
         self.network_updated_signal_obj = network_updated_signal_obj
         vbox = QVBoxLayout(self)
@@ -60,7 +52,7 @@ class NetworkDialog(QDialog):
         vbox.addLayout(Buttons(CloseButton(self)))
         self.network_updated_signal_obj.network_updated_signal.connect(
             self.on_update)
-        network.register_callback(self.on_network, ['network_updated'])
+        network.register_callback(self.on_network, ['updated', 'interfaces'])
 
     def on_network(self, event, *args):
         self.network_updated_signal_obj.network_updated_signal.emit(event, args)
@@ -89,8 +81,8 @@ class NodesListWidget(QTreeWidget):
             server = item.data(1, Qt.UserRole)
             menu.addAction(_("Use as server"), lambda: self.parent.follow_server(server))
         else:
-            chain_id = item.data(1, Qt.UserRole)
-            menu.addAction(_("Follow this branch"), lambda: self.parent.follow_branch(chain_id))
+            index = item.data(1, Qt.UserRole)
+            menu.addAction(_("Follow this branch"), lambda: self.parent.follow_branch(index))
         menu.exec_(self.viewport().mapToGlobal(position))
 
     def keyPressEvent(self, event):
@@ -105,28 +97,27 @@ class NodesListWidget(QTreeWidget):
         pt.setX(50)
         self.customContextMenuRequested.emit(pt)
 
-    def update(self, network: Network):
+    def update(self, network):
         self.clear()
         self.addChild = self.addTopLevelItem
         chains = network.get_blockchains()
         n_chains = len(chains)
-        for chain_id, interfaces in chains.items():
-            b = blockchain.blockchains.get(chain_id)
-            if b is None: continue
+        for k, items in chains.items():
+            b = blockchain.blockchains[k]
             name = b.get_name()
-            if n_chains > 1:
-                x = QTreeWidgetItem([name + '@%d'%b.get_max_forkpoint(), '%d'%b.height()])
+            if n_chains >1:
+                x = QTreeWidgetItem([name + '@%d'%b.get_forkpoint(), '%d'%b.height()])
                 x.setData(0, Qt.UserRole, 1)
-                x.setData(1, Qt.UserRole, b.get_id())
+                x.setData(1, Qt.UserRole, b.forkpoint)
             else:
                 x = self
-            for i in interfaces:
+            for i in items:
                 star = ' *' if i == network.interface else ''
                 item = QTreeWidgetItem([i.host + star, '%d'%i.tip])
                 item.setData(0, Qt.UserRole, 0)
                 item.setData(1, Qt.UserRole, i.server)
                 x.addChild(item)
-            if n_chains > 1:
+            if n_chains>1:
                 self.addTopLevelItem(x)
                 x.setExpanded(True)
 
@@ -135,15 +126,8 @@ class NodesListWidget(QTreeWidget):
         h.setSectionResizeMode(0, QHeaderView.Stretch)
         h.setSectionResizeMode(1, QHeaderView.ResizeToContents)
 
-        super().update()
-
 
 class ServerListWidget(QTreeWidget):
-    class Columns(IntEnum):
-        HOST = 0
-        PORT = 1
-
-    SERVER_STR_ROLE = Qt.UserRole + 100
 
     def __init__(self, parent):
         QTreeWidget.__init__(self)
@@ -157,7 +141,7 @@ class ServerListWidget(QTreeWidget):
         if not item:
             return
         menu = QMenu()
-        server = item.data(self.Columns.HOST, self.SERVER_STR_ROLE)
+        server = item.data(1, Qt.UserRole)
         menu.addAction(_("Use as server"), lambda: self.set_server(server))
         menu.exec_(self.viewport().mapToGlobal(position))
 
@@ -188,20 +172,18 @@ class ServerListWidget(QTreeWidget):
             if port:
                 x = QTreeWidgetItem([_host, port])
                 server = serialize_server(_host, port, protocol)
-                x.setData(self.Columns.HOST, self.SERVER_STR_ROLE, server)
+                x.setData(1, Qt.UserRole, server)
                 self.addTopLevelItem(x)
 
         h = self.header()
         h.setStretchLastSection(False)
-        h.setSectionResizeMode(self.Columns.HOST, QHeaderView.Stretch)
-        h.setSectionResizeMode(self.Columns.PORT, QHeaderView.ResizeToContents)
-
-        super().update()
+        h.setSectionResizeMode(0, QHeaderView.Stretch)
+        h.setSectionResizeMode(1, QHeaderView.ResizeToContents)
 
 
 class NetworkChoiceLayout(object):
 
-    def __init__(self, network: Network, config, wizard=False):
+    def __init__(self, network, config, wizard=False):
         self.network = network
         self.config = config
         self.protocol = None
@@ -215,17 +197,14 @@ class NetworkChoiceLayout(object):
         tabs.addTab(server_tab, _('Server'))
         tabs.addTab(proxy_tab, _('Proxy'))
 
-        fixed_width_hostname = 24 * char_width_in_lineedit()
-        fixed_width_port = 6 * char_width_in_lineedit()
-
         # server tab
         grid = QGridLayout(server_tab)
         grid.setSpacing(8)
 
         self.server_host = QLineEdit()
-        self.server_host.setFixedWidth(fixed_width_hostname)
+        self.server_host.setFixedWidth(200)
         self.server_port = QLineEdit()
-        self.server_port.setFixedWidth(fixed_width_port)
+        self.server_port.setFixedWidth(60)
         self.autoconnect_cb = QCheckBox(_('Select server automatically'))
         self.autoconnect_cb.setEnabled(self.config.is_modifiable('auto_connect'))
 
@@ -262,15 +241,15 @@ class NetworkChoiceLayout(object):
         self.proxy_mode = QComboBox()
         self.proxy_mode.addItems(['SOCKS4', 'SOCKS5'])
         self.proxy_host = QLineEdit()
-        self.proxy_host.setFixedWidth(fixed_width_hostname)
+        self.proxy_host.setFixedWidth(200)
         self.proxy_port = QLineEdit()
-        self.proxy_port.setFixedWidth(fixed_width_port)
+        self.proxy_port.setFixedWidth(60)
         self.proxy_user = QLineEdit()
         self.proxy_user.setPlaceholderText(_("Proxy user"))
         self.proxy_password = QLineEdit()
         self.proxy_password.setPlaceholderText(_("Password"))
         self.proxy_password.setEchoMode(QLineEdit.Password)
-        self.proxy_password.setFixedWidth(fixed_width_port)
+        self.proxy_password.setFixedWidth(60)
 
         self.proxy_mode.currentIndexChanged.connect(self.set_proxy)
         self.proxy_host.editingFinished.connect(self.set_proxy)
@@ -285,7 +264,7 @@ class NetworkChoiceLayout(object):
         self.proxy_password.textEdited.connect(self.proxy_settings_changed)
 
         self.tor_cb = QCheckBox(_("Use Tor Proxy"))
-        self.tor_cb.setIcon(read_QIcon("tor_logo.png"))
+        self.tor_cb.setIcon(QIcon(":icons/tor_logo.png"))
         self.tor_cb.hide()
         self.tor_cb.clicked.connect(self.use_tor_proxy)
 
@@ -359,9 +338,8 @@ class NetworkChoiceLayout(object):
         net_params = self.network.get_parameters()
         host, port, protocol = net_params.host, net_params.port, net_params.protocol
         proxy_config, auto_connect = net_params.proxy, net_params.auto_connect
-        if not self.server_host.hasFocus() and not self.server_port.hasFocus():
-            self.server_host.setText(host)
-            self.server_port.setText(str(port))
+        self.server_host.setText(host)
+        self.server_port.setText(str(port))
         self.autoconnect_cb.setChecked(auto_connect)
 
         interface = self.network.interface
@@ -379,9 +357,9 @@ class NetworkChoiceLayout(object):
         status = _("Connected to {0} nodes.").format(n) if n else _("Not connected")
         self.status_label.setText(status)
         chains = self.network.get_blockchains()
-        if len(chains) > 1:
+        if len(chains)>1:
             chain = self.network.blockchain()
-            forkpoint = chain.get_max_forkpoint()
+            forkpoint = chain.get_forkpoint()
             name = chain.get_name()
             msg = _('Chain split detected at block {0}').format(forkpoint) + '\n'
             msg += (_('You are following branch') if auto_connect else _('Your server is on branch'))+ ' ' + name
@@ -427,12 +405,16 @@ class NetworkChoiceLayout(object):
         self.set_protocol(p)
         self.set_server()
 
-    def follow_branch(self, chain_id):
-        self.network.run_from_another_thread(self.network.follow_chain_given_id(chain_id))
+    def follow_branch(self, index):
+        self.network.follow_chain(index)
         self.update()
 
     def follow_server(self, server):
-        self.network.run_from_another_thread(self.network.follow_chain_given_server(server))
+        self.network.switch_to_interface(server)
+        net_params = self.network.get_parameters()
+        host, port, protocol = deserialize_server(server)
+        net_params = net_params._replace(host=host, port=port, protocol=protocol)
+        self.network.set_parameters(net_params)
         self.update()
 
     def server_changed(self, x):
@@ -465,7 +447,7 @@ class NetworkChoiceLayout(object):
         net_params = net_params._replace(host=str(self.server_host.text()),
                                          port=str(self.server_port.text()),
                                          auto_connect=self.autoconnect_cb.isChecked())
-        self.network.run_from_another_thread(self.network.set_parameters(net_params))
+        self.network.set_parameters(net_params)
 
     def set_proxy(self):
         net_params = self.network.get_parameters()
@@ -479,18 +461,14 @@ class NetworkChoiceLayout(object):
             proxy = None
             self.tor_cb.setChecked(False)
         net_params = net_params._replace(proxy=proxy)
-        self.network.run_from_another_thread(self.network.set_parameters(net_params))
+        self.network.set_parameters(net_params)
 
     def suggest_proxy(self, found_proxy):
-        if found_proxy is None:
-            self.tor_cb.hide()
-            return
         self.tor_proxy = found_proxy
         self.tor_cb.setText("Use Tor proxy at port " + str(found_proxy[1]))
-        if (self.proxy_cb.isChecked()
-                and self.proxy_mode.currentIndex() == self.proxy_mode.findText('SOCKS5')
-                and self.proxy_host.text() == "127.0.0.1"
-                and self.proxy_port.text() == str(found_proxy[1])):
+        if self.proxy_mode.currentIndex() == self.proxy_mode.findText('SOCKS5') \
+            and self.proxy_host.text() == "127.0.0.1" \
+                and self.proxy_port.text() == str(found_proxy[1]):
             self.tor_cb.setChecked(True)
         self.tor_cb.show()
 
@@ -500,7 +478,7 @@ class NetworkChoiceLayout(object):
         else:
             socks5_mode_index = self.proxy_mode.findText('SOCKS5')
             if socks5_mode_index == -1:
-                _logger.info("can't find proxy_mode 'SOCKS5'")
+                print_error("[network_dialog] can't find proxy_mode 'SOCKS5'")
                 return
             self.proxy_mode.setCurrentIndex(socks5_mode_index)
             self.proxy_host.setText("127.0.0.1")
@@ -525,22 +503,17 @@ class TorDetector(QThread):
     def run(self):
         # Probable ports for Tor to listen at
         ports = [9050, 9150]
-        while True:
-            for p in ports:
-                net_addr = ("127.0.0.1", p)
-                if TorDetector.is_tor_port(net_addr):
-                    self.found_proxy.emit(net_addr)
-                    break
-            else:
-                self.found_proxy.emit(None)
-            time.sleep(10)
+        for p in ports:
+            if TorDetector.is_tor_port(p):
+                self.found_proxy.emit(("127.0.0.1", p))
+                return
 
     @staticmethod
-    def is_tor_port(net_addr: Tuple[str, int]) -> bool:
+    def is_tor_port(port):
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s = (socket._socketobject if hasattr(socket, "_socketobject") else socket.socket)(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(0.1)
-            s.connect(net_addr)
+            s.connect(("127.0.0.1", port))
             # Tor responds uniquely to HTTP-like requests
             s.send(b"GET\n")
             if b"Tor is not an HTTP Proxy" in s.recv(1024):

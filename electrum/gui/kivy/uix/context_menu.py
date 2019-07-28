@@ -19,18 +19,16 @@ Builder.load_string('''
 
 <ContextMenu>
     size_hint: 1, None
-    height: '60dp'
+    height: '48dp'
     pos: (0, 0)
     show_arrow: False
     arrow_pos: 'top_mid'
     padding: 0
     orientation: 'horizontal'
-    background_color: (0.1, 0.1, 0.1, 1)
-    background_image: ''
     BoxLayout:
         size_hint: 1, 1
-        height: '54dp'
-        padding: '0dp', '0dp'
+        height: '48dp'
+        padding: '12dp', '0dp'
         spacing: '3dp'
         orientation: 'horizontal'
         id: buttons

@@ -27,26 +27,21 @@
 
 # Note: The deserialization code originally comes from ABE.
 
+from typing import Sequence, Union, NamedTuple, Tuple, Optional, Iterable
+
+from .util import print_error, profiler
+
+from . import ecc
+from . import bitcoin
+from .bitcoin import *
 import struct
 import traceback
 import sys
-from typing import (Sequence, Union, NamedTuple, Tuple, Optional, Iterable,
-                    Callable, List, Dict)
 
-from . import ecc, bitcoin, constants, segwit_addr
-from .util import profiler, to_bytes, bh2u, bfh
-from .bitcoin import (TYPE_ADDRESS, TYPE_PUBKEY, TYPE_SCRIPT, hash_160,
-                      hash160_to_p2sh, hash160_to_p2pkh, hash_to_segwit_addr,
-                      hash_encode, var_int, TOTAL_COIN_SUPPLY_LIMIT_IN_BTC, COIN,
-                      push_script, int_to_hex, push_script, b58_address_to_hash160,
-                      opcodes, add_number_to_script, base_decode, is_segwit_script_type)
-from .crypto import sha256d
+#
+# Workalike python implementation of Bitcoin's CDataStream class.
+#
 from .keystore import xpubkey_to_address, xpubkey_to_pubkey
-from .logging import get_logger
-
-
-_logger = get_logger(__name__)
-
 
 NO_SIGNATURE = 'ff'
 PARTIAL_TXN_HEADER_MAGIC = b'EPTF\xff'
@@ -68,33 +63,17 @@ class MalformedBitcoinScript(Exception):
     pass
 
 
-class TxOutput(NamedTuple):
-    type: int
-    address: str
-    value: Union[int, str]  # str when the output is set to max: '!'
+TxOutput = NamedTuple("TxOutput", [('type', int), ('address', str), ('value', Union[int, str])])
+# ^ value is str when the output is set to max: '!'
 
 
-class TxOutputForUI(NamedTuple):
-    address: str
-    value: int
-
-
-class TxOutputHwInfo(NamedTuple):
-    address_index: Tuple
-    sorted_xpubs: Iterable[str]
-    num_sig: Optional[int]
-    script_type: str
-
-
-class BIP143SharedTxDigestFields(NamedTuple):
-    hashPrevouts: str
-    hashSequence: str
-    hashOutputs: str
+TxOutputHwInfo = NamedTuple("TxOutputHwInfo", [('address_index', Tuple),
+                                               ('sorted_xpubs', Iterable[str]),
+                                               ('num_sig', Optional[int]),
+                                               ('script_type', str)])
 
 
 class BCDataStream(object):
-    """Workalike python implementation of Bitcoin's CDataStream class."""
-
     def __init__(self):
         self.input = None
         self.read_cursor = 0
@@ -136,7 +115,7 @@ class BCDataStream(object):
             self.read_cursor += length
             return result
         except IndexError:
-            raise SerializationError("attempt to read past end of buffer") from None
+            raise SerializationError("attempt to read past end of buffer")
 
     def can_read_more(self) -> bool:
         if not self.input:
@@ -170,8 +149,8 @@ class BCDataStream(object):
             elif size == 255:
                 size = self._read_num('<Q')
             return size
-        except IndexError as e:
-            raise SerializationError("attempt to read past end of buffer") from e
+        except IndexError:
+            raise SerializationError("attempt to read past end of buffer")
 
     def write_compact_size(self, size):
         if size < 0:
@@ -193,12 +172,89 @@ class BCDataStream(object):
             (i,) = struct.unpack_from(format, self.input, self.read_cursor)
             self.read_cursor += struct.calcsize(format)
         except Exception as e:
-            raise SerializationError(e) from e
+            raise SerializationError(e)
         return i
 
     def _write_num(self, format, num):
         s = struct.pack(format, num)
         self.write(s)
+
+
+# enum-like type
+# From the Python Cookbook, downloaded from http://code.activestate.com/recipes/67107/
+class EnumException(Exception):
+    pass
+
+
+class Enumeration:
+    def __init__(self, name, enumList):
+        self.__doc__ = name
+        lookup = { }
+        reverseLookup = { }
+        i = 0
+        uniqueNames = [ ]
+        uniqueValues = [ ]
+        for x in enumList:
+            if isinstance(x, tuple):
+                x, i = x
+            if not isinstance(x, str):
+                raise EnumException("enum name is not a string: " + x)
+            if not isinstance(i, int):
+                raise EnumException("enum value is not an integer: " + i)
+            if x in uniqueNames:
+                raise EnumException("enum name is not unique: " + x)
+            if i in uniqueValues:
+                raise EnumException("enum value is not unique for " + x)
+            uniqueNames.append(x)
+            uniqueValues.append(i)
+            lookup[x] = i
+            reverseLookup[i] = x
+            i = i + 1
+        self.lookup = lookup
+        self.reverseLookup = reverseLookup
+
+    def __getattr__(self, attr):
+        if attr not in self.lookup:
+            raise AttributeError
+        return self.lookup[attr]
+    def whatis(self, value):
+        return self.reverseLookup[value]
+
+
+# This function comes from bitcointools, bct-LICENSE.txt.
+def long_hex(bytes):
+    return bytes.encode('hex_codec')
+
+# This function comes from bitcointools, bct-LICENSE.txt.
+def short_hex(bytes):
+    t = bytes.encode('hex_codec')
+    if len(t) < 11:
+        return t
+    return t[0:4]+"..."+t[-4:]
+
+
+
+opcodes = Enumeration("Opcodes", [
+    ("OP_0", 0), ("OP_PUSHDATA1",76), "OP_PUSHDATA2", "OP_PUSHDATA4", "OP_1NEGATE", "OP_RESERVED",
+    "OP_1", "OP_2", "OP_3", "OP_4", "OP_5", "OP_6", "OP_7",
+    "OP_8", "OP_9", "OP_10", "OP_11", "OP_12", "OP_13", "OP_14", "OP_15", "OP_16",
+    "OP_NOP", "OP_VER", "OP_IF", "OP_NOTIF", "OP_VERIF", "OP_VERNOTIF", "OP_ELSE", "OP_ENDIF", "OP_VERIFY",
+    "OP_RETURN", "OP_TOALTSTACK", "OP_FROMALTSTACK", "OP_2DROP", "OP_2DUP", "OP_3DUP", "OP_2OVER", "OP_2ROT", "OP_2SWAP",
+    "OP_IFDUP", "OP_DEPTH", "OP_DROP", "OP_DUP", "OP_NIP", "OP_OVER", "OP_PICK", "OP_ROLL", "OP_ROT",
+    "OP_SWAP", "OP_TUCK", "OP_CAT", "OP_SUBSTR", "OP_LEFT", "OP_RIGHT", "OP_SIZE", "OP_INVERT", "OP_AND",
+    "OP_OR", "OP_XOR", "OP_EQUAL", "OP_EQUALVERIFY", "OP_RESERVED1", "OP_RESERVED2", "OP_1ADD", "OP_1SUB", "OP_2MUL",
+    "OP_2DIV", "OP_NEGATE", "OP_ABS", "OP_NOT", "OP_0NOTEQUAL", "OP_ADD", "OP_SUB", "OP_MUL", "OP_DIV",
+    "OP_MOD", "OP_LSHIFT", "OP_RSHIFT", "OP_BOOLAND", "OP_BOOLOR",
+    "OP_NUMEQUAL", "OP_NUMEQUALVERIFY", "OP_NUMNOTEQUAL", "OP_LESSTHAN",
+    "OP_GREATERTHAN", "OP_LESSTHANOREQUAL", "OP_GREATERTHANOREQUAL", "OP_MIN", "OP_MAX",
+    "OP_WITHIN", "OP_RIPEMD160", "OP_SHA1", "OP_SHA256", "OP_HASH160",
+    "OP_HASH256", "OP_CODESEPARATOR", "OP_CHECKSIG", "OP_CHECKSIGVERIFY", "OP_CHECKMULTISIG",
+    "OP_CHECKMULTISIGVERIFY",
+    ("OP_NOP1", 0xB0),
+    ("OP_CHECKLOCKTIMEVERIFY", 0xB1), ("OP_CHECKSEQUENCEVERIFY", 0xB2),
+    "OP_NOP4", "OP_NOP5", "OP_NOP6", "OP_NOP7", "OP_NOP8", "OP_NOP9", "OP_NOP10",
+    ("OP_INVALIDOPCODE", 0xFF),
+])
 
 
 def script_GetOp(_bytes : bytes):
@@ -228,26 +284,8 @@ def script_GetOp(_bytes : bytes):
         yield opcode, vch, i
 
 
-class OPPushDataGeneric:
-    def __init__(self, pushlen: Callable=None):
-        if pushlen is not None:
-            self.check_data_len = pushlen
-
-    @classmethod
-    def check_data_len(cls, datalen: int) -> bool:
-        # Opcodes below OP_PUSHDATA4 all just push data onto stack, and are equivalent.
-        return opcodes.OP_PUSHDATA4 >= datalen >= 0
-
-    @classmethod
-    def is_instance(cls, item):
-        # accept objects that are instances of this class
-        # or other classes that are subclasses
-        return isinstance(item, cls) \
-               or (isinstance(item, type) and issubclass(item, cls))
-
-
-OPPushDataPubkey = OPPushDataGeneric(lambda x: x in (33, 65))
-# note that this does not include x_pubkeys !
+def script_GetOpName(opcode):
+    return (opcodes.whatis(opcode)).replace("OP_", "")
 
 
 def match_decoded(decoded, to_match):
@@ -256,11 +294,9 @@ def match_decoded(decoded, to_match):
     if len(decoded) != len(to_match):
         return False
     for i in range(len(decoded)):
-        to_match_item = to_match[i]
-        decoded_item = decoded[i]
-        if OPPushDataGeneric.is_instance(to_match_item) and to_match_item.check_data_len(decoded_item[0]):
-            continue
-        if to_match_item != decoded_item[0]:
+        if to_match[i] == opcodes.OP_PUSHDATA4 and decoded[i][0] <= opcodes.OP_PUSHDATA4 and decoded[i][0]>0:
+            continue  # Opcodes below OP_PUSHDATA4 all just push data onto stack, and are equivalent.
+        if to_match[i] != decoded[i][0]:
             return False
     return True
 
@@ -279,22 +315,23 @@ def parse_scriptSig(d, _bytes):
         decoded = [ x for x in script_GetOp(_bytes) ]
     except Exception as e:
         # coinbase transactions raise an exception
-        _logger.info(f"parse_scriptSig: cannot find address in input script (coinbase?) {bh2u(_bytes)}")
+        print_error("parse_scriptSig: cannot find address in input script (coinbase?)",
+                    bh2u(_bytes))
         return
 
-    match = [OPPushDataGeneric]
+    match = [ opcodes.OP_PUSHDATA4 ]
     if match_decoded(decoded, match):
         item = decoded[0][1]
         if item[0] == 0:
             # segwit embedded into p2sh
             # witness version 0
-            d['address'] = bitcoin.hash160_to_p2sh(hash_160(item))
+            d['address'] = bitcoin.hash160_to_p2sh(bitcoin.hash_160(item))
             if len(item) == 22:
                 d['type'] = 'p2wpkh-p2sh'
             elif len(item) == 34:
                 d['type'] = 'p2wsh-p2sh'
             else:
-                _logger.info(f"unrecognized txin type {bh2u(item)}")
+                print_error("unrecognized txin type", bh2u(item))
         elif opcodes.OP_1 <= item[0] <= opcodes.OP_16:
             # segwit embedded into p2sh
             # witness version 1-16
@@ -313,7 +350,7 @@ def parse_scriptSig(d, _bytes):
     # p2pkh TxIn transactions push a signature
     # (71-73 bytes) and then their public key
     # (33 or 65 bytes) onto the stack:
-    match = [OPPushDataGeneric, OPPushDataGeneric]
+    match = [ opcodes.OP_PUSHDATA4, opcodes.OP_PUSHDATA4 ]
     if match_decoded(decoded, match):
         sig = bh2u(decoded[0][1])
         x_pubkey = bh2u(decoded[1][1])
@@ -321,7 +358,8 @@ def parse_scriptSig(d, _bytes):
             signatures = parse_sig([sig])
             pubkey, address = xpubkey_to_address(x_pubkey)
         except:
-            _logger.info(f"parse_scriptSig: cannot find address in input script (p2pkh?) {bh2u(_bytes)}")
+            print_error("parse_scriptSig: cannot find address in input script (p2pkh?)",
+                        bh2u(_bytes))
             return
         d['type'] = 'p2pkh'
         d['signatures'] = signatures
@@ -332,15 +370,15 @@ def parse_scriptSig(d, _bytes):
         return
 
     # p2sh transaction, m of n
-    match = [opcodes.OP_0] + [OPPushDataGeneric] * (len(decoded) - 1)
+    match = [ opcodes.OP_0 ] + [ opcodes.OP_PUSHDATA4 ] * (len(decoded) - 1)
     if match_decoded(decoded, match):
         x_sig = [bh2u(x[1]) for x in decoded[1:-1]]
         redeem_script_unsanitized = decoded[-1][1]  # for partial multisig txn, this has x_pubkeys
         try:
             m, n, x_pubkeys, pubkeys, redeem_script = parse_redeemScript_multisig(redeem_script_unsanitized)
         except NotRecognizedRedeemScript:
-            _logger.info(f"parse_scriptSig: cannot find address in input script (p2sh?) {bh2u(_bytes)}")
-
+            print_error("parse_scriptSig: cannot find address in input script (p2sh?)",
+                        bh2u(_bytes))
             # we could still guess:
             # d['address'] = hash160_to_p2sh(hash_160(decoded[-1][1]))
             return
@@ -355,7 +393,7 @@ def parse_scriptSig(d, _bytes):
         return
 
     # custom partial format for imported addresses
-    match = [opcodes.OP_INVALIDOPCODE, opcodes.OP_0, OPPushDataGeneric]
+    match = [ opcodes.OP_INVALIDOPCODE, opcodes.OP_0, opcodes.OP_PUSHDATA4 ]
     if match_decoded(decoded, match):
         x_pubkey = bh2u(decoded[2][1])
         pubkey, address = xpubkey_to_address(x_pubkey)
@@ -367,7 +405,8 @@ def parse_scriptSig(d, _bytes):
         d['signatures'] = [None]
         return
 
-    _logger.info(f"parse_scriptSig: cannot find address in input script (unknown) {bh2u(_bytes)}")
+    print_error("parse_scriptSig: cannot find address in input script (unknown)",
+                bh2u(_bytes))
 
 
 def parse_redeemScript_multisig(redeem_script: bytes):
@@ -382,7 +421,7 @@ def parse_redeemScript_multisig(redeem_script: bytes):
         raise NotRecognizedRedeemScript()
     op_m = opcodes.OP_1 + m - 1
     op_n = opcodes.OP_1 + n - 1
-    match_multisig = [op_m] + [OPPushDataGeneric] * n + [op_n, opcodes.OP_CHECKMULTISIG]
+    match_multisig = [ op_m ] + [opcodes.OP_PUSHDATA4]*n + [ op_n, opcodes.OP_CHECKMULTISIG ]
     if not match_decoded(dec2, match_multisig):
         raise NotRecognizedRedeemScript()
     x_pubkeys = [bh2u(x[1]) for x in dec2[1:-2]]
@@ -394,36 +433,33 @@ def parse_redeemScript_multisig(redeem_script: bytes):
     return m, n, x_pubkeys, pubkeys, redeem_script_sanitized
 
 
-def get_address_from_output_script(_bytes: bytes, *, net=None) -> Tuple[int, str]:
+def get_address_from_output_script(_bytes, *, net=None):
     try:
         decoded = [x for x in script_GetOp(_bytes)]
     except MalformedBitcoinScript:
         decoded = None
 
-    # p2pk
-    match = [OPPushDataPubkey, opcodes.OP_CHECKSIG]
-    if match_decoded(decoded, match) and ecc.ECPubkey.is_pubkey_bytes(decoded[0][1]):
+    # The Genesis Block, self-payments, and pay-by-IP-address payments look like:
+    # 65 BYTES:... CHECKSIG
+    match = [ opcodes.OP_PUSHDATA4, opcodes.OP_CHECKSIG ]
+    if match_decoded(decoded, match):
         return TYPE_PUBKEY, bh2u(decoded[0][1])
 
-    # p2pkh
-    match = [opcodes.OP_DUP, opcodes.OP_HASH160, OPPushDataGeneric(lambda x: x == 20), opcodes.OP_EQUALVERIFY, opcodes.OP_CHECKSIG]
+    # Pay-by-Bitcoin-address TxOuts look like:
+    # DUP HASH160 20 BYTES:... EQUALVERIFY CHECKSIG
+    match = [ opcodes.OP_DUP, opcodes.OP_HASH160, opcodes.OP_PUSHDATA4, opcodes.OP_EQUALVERIFY, opcodes.OP_CHECKSIG ]
     if match_decoded(decoded, match):
         return TYPE_ADDRESS, hash160_to_p2pkh(decoded[2][1], net=net)
 
     # p2sh
-    match = [opcodes.OP_HASH160, OPPushDataGeneric(lambda x: x == 20), opcodes.OP_EQUAL]
+    match = [ opcodes.OP_HASH160, opcodes.OP_PUSHDATA4, opcodes.OP_EQUAL ]
     if match_decoded(decoded, match):
         return TYPE_ADDRESS, hash160_to_p2sh(decoded[1][1], net=net)
 
-    # segwit address (version 0)
-    match = [opcodes.OP_0, OPPushDataGeneric(lambda x: x in (20, 32))]
-    if match_decoded(decoded, match):
-        return TYPE_ADDRESS, hash_to_segwit_addr(decoded[1][1], witver=0, net=net)
-
-    # segwit address (version 1-16)
-    future_witness_versions = list(range(opcodes.OP_1, opcodes.OP_16 + 1))
-    for witver, opcode in enumerate(future_witness_versions, start=1):
-        match = [opcode, OPPushDataGeneric(lambda x: 2 <= x <= 40)]
+    # segwit address
+    possible_witness_versions = [opcodes.OP_0] + list(range(opcodes.OP_1, opcodes.OP_16 + 1))
+    for witver, opcode in enumerate(possible_witness_versions):
+        match = [ opcode, opcodes.OP_PUSHDATA4 ]
         if match_decoded(decoded, match):
             return TYPE_ADDRESS, hash_to_segwit_addr(decoded[1][1], witver=witver, net=net)
 
@@ -452,7 +488,8 @@ def parse_input(vds, full_parse: bool):
         try:
             parse_scriptSig(d, scriptSig)
         except BaseException:
-            _logger.exception(f'failed to parse scriptSig {bh2u(scriptSig)}')
+            traceback.print_exc(file=sys.stderr)
+            print_error('failed to parse scriptSig', bh2u(scriptSig))
     return d
 
 
@@ -518,7 +555,8 @@ def parse_witness(vds, txin, full_parse: bool):
         txin['type'] = 'unknown'
     except BaseException:
         txin['type'] = 'unknown'
-        _logger.exception(f"failed to parse witness {txin.get('witness')}")
+        traceback.print_exc(file=sys.stderr)
+        print_error('failed to parse witness', txin.get('witness'))
 
 
 def parse_output(vds, i):
@@ -574,13 +612,16 @@ def deserialize(raw: str, force_full_parse=False) -> dict:
 
 # pay & redeem scripts
 
+
+
 def multisig_script(public_keys: Sequence[str], m: int) -> str:
     n = len(public_keys)
-    assert 1 <= m <= n <= 15, f'm {m}, n {n}'
-    op_m = bh2u(add_number_to_script(m))
-    op_n = bh2u(add_number_to_script(n))
-    keylist = [push_script(k) for k in public_keys]
-    return op_m + ''.join(keylist) + op_n + opcodes.OP_CHECKMULTISIG.hex()
+    assert n <= 15
+    assert m <= n
+    op_m = format(opcodes.OP_1 + m - 1, 'x')
+    op_n = format(opcodes.OP_1 + n - 1, 'x')
+    keylist = [op_push(len(k)//2) + k for k in public_keys]
+    return op_m + ''.join(keylist) + op_n + 'ae'
 
 
 
@@ -602,14 +643,13 @@ class Transaction:
         else:
             raise Exception("cannot initialize transaction", raw)
         self._inputs = None
-        self._outputs = None  # type: List[TxOutput]
+        self._outputs = None
         self.locktime = 0
-        self.version = 2
+        self.version = 1
         # by default we assume this is a partial txn;
         # this value will get properly set when deserializing
         self.is_partial_originally = True
         self._segwit_ser = None  # None means "don't know"
-        self.output_info = None  # type: Optional[Dict[str, TxOutputHwInfo]]
 
     def update(self, raw):
         self.raw = raw
@@ -621,7 +661,7 @@ class Transaction:
             self.deserialize()
         return self._inputs
 
-    def outputs(self) -> List[TxOutput]:
+    def outputs(self):
         if self._outputs is None:
             self.deserialize()
         return self._outputs
@@ -656,7 +696,7 @@ class Transaction:
             sig = signatures[i]
             if sig in txin.get('signatures'):
                 continue
-            pre_hash = sha256d(bfh(self.serialize_preimage(i)))
+            pre_hash = Hash(bfh(self.serialize_preimage(i)))
             sig_string = ecc.sig_string_from_der_sig(bfh(sig[:-2]))
             for recid in range(4):
                 try:
@@ -669,11 +709,12 @@ class Transaction:
                     try:
                         public_key.verify_message_hash(sig_string, pre_hash)
                     except Exception:
-                        _logger.exception('')
+                        traceback.print_exc(file=sys.stderr)
                         continue
                     j = pubkeys.index(pubkey_hex)
-                    _logger.info(f"adding sig {i} {j} {pubkey_hex} {sig}")
+                    print_error("adding sig", i, j, pubkey_hex, sig)
                     self.add_signature_to_txin(i, j, sig)
+                    #self._inputs[i]['x_pubkeys'][j] = pubkey
                     break
         # redo raw
         self.raw = self.serialize()
@@ -683,20 +724,6 @@ class Transaction:
         txin['signatures'][signingPos] = sig
         txin['scriptSig'] = None  # force re-serialization
         txin['witness'] = None    # force re-serialization
-        self.raw = None
-
-    def add_inputs_info(self, wallet):
-        if self.is_complete():
-            return
-        for txin in self.inputs():
-            wallet.add_input_info(txin)
-
-    def remove_signatures(self):
-        for txin in self.inputs():
-            txin['signatures'] = [None] * len(txin['signatures'])
-            txin['scriptSig'] = None
-            txin['witness'] = None
-        assert not self.is_complete()
         self.raw = None
 
     def deserialize(self, force_full_parse=False):
@@ -715,19 +742,15 @@ class Transaction:
         return d
 
     @classmethod
-    def from_io(klass, inputs, outputs, locktime=0, version=None):
+    def from_io(klass, inputs, outputs, locktime=0):
         self = klass(None)
         self._inputs = inputs
         self._outputs = outputs
         self.locktime = locktime
-        if version is not None:
-            self.version = version
-        self.BIP69_sort()
         return self
 
     @classmethod
-    def pay_script(self, output_type, addr: str) -> str:
-        """Returns scriptPubKey in hex form."""
+    def pay_script(self, output_type, addr):
         if output_type == TYPE_SCRIPT:
             return addr
         elif output_type == TYPE_ADDRESS:
@@ -791,7 +814,7 @@ class Transaction:
     @classmethod
     def serialize_witness(self, txin, estimate_size=False):
         _type = txin['type']
-        if not self.is_segwit_input(txin) and not txin['type'] == 'address':
+        if not self.is_segwit_input(txin) and not self.is_input_value_needed(txin):
             return '00'
         if _type == 'coinbase':
             return txin['witness']
@@ -823,7 +846,15 @@ class Transaction:
         if _type == 'address' and guess_for_address:
             _type = cls.guess_txintype_from_address(txin['address'])
         has_nonzero_witness = txin.get('witness', '00') not in ('00', None)
-        return is_segwit_script_type(_type) or has_nonzero_witness
+        return cls.is_segwit_inputtype(_type) or has_nonzero_witness
+
+    @classmethod
+    def is_segwit_inputtype(cls, txin_type):
+        return txin_type in ('p2wpkh', 'p2wpkh-p2sh', 'p2wsh', 'p2wsh-p2sh')
+
+    @classmethod
+    def is_input_value_needed(cls, txin):
+        return cls.is_segwit_input(txin) or txin['type'] == 'address'
 
     @classmethod
     def guess_txintype_from_address(cls, addr):
@@ -839,7 +870,7 @@ class Transaction:
         witver, witprog = segwit_addr.decode(constants.net.SEGWIT_HRP, addr)
         if witprog is not None:
             return 'p2wpkh'
-        addrtype, hash_160_ = b58_address_to_hash160(addr)
+        addrtype, hash_160 = b58_address_to_hash160(addr)
         if addrtype == constants.net.ADDRTYPE_P2PKH:
             return 'p2pkh'
         elif addrtype == constants.net.ADDRTYPE_P2SH:
@@ -886,7 +917,7 @@ class Transaction:
             scriptSig = bitcoin.p2wsh_nested_script(witness_script)
             return push_script(scriptSig)
         elif _type == 'address':
-            return bytes([opcodes.OP_INVALIDOPCODE, opcodes.OP_0]).hex() + push_script(pubkeys[0])
+            return 'ff00' + push_script(pubkeys[0])  # fd extended pubkey
         elif _type == 'unknown':
             return txin['scriptSig']
         return script
@@ -915,7 +946,7 @@ class Transaction:
             return multisig_script(pubkeys, txin['num_sig'])
         elif txin['type'] in ['p2wpkh', 'p2wpkh-p2sh']:
             pubkey = pubkeys[0]
-            pkh = bh2u(hash_160(bfh(pubkey)))
+            pkh = bh2u(bitcoin.hash_160(bfh(pubkey)))
             return '76a9' + push_script(pkh) + '88ac'
         elif txin['type'] == 'p2pk':
             pubkey = pubkeys[0]
@@ -950,44 +981,31 @@ class Transaction:
         for txin in self.inputs():
             txin['sequence'] = nSequence
 
-    def BIP69_sort(self, inputs=True, outputs=True):
-        if inputs:
-            self._inputs.sort(key = lambda i: (i['prevout_hash'], i['prevout_n']))
-        if outputs:
-            self._outputs.sort(key = lambda o: (o.value, self.pay_script(o.type, o.address)))
+    def BIP_LI01_sort(self):
+        # See https://github.com/kristovatlas/rfc/blob/master/bips/bip-li01.mediawiki
+        self._inputs.sort(key = lambda i: (i['prevout_hash'], i['prevout_n']))
+        self._outputs.sort(key = lambda o: (o[2], self.pay_script(o[0], o[1])))
 
-    @classmethod
-    def serialize_output(cls, output: TxOutput) -> str:
-        s = int_to_hex(output.value, 8)
-        script = cls.pay_script(output.type, output.address)
+    def serialize_output(self, output):
+        output_type, addr, amount = output
+        s = int_to_hex(amount, 8)
+        script = self.pay_script(output_type, addr)
         s += var_int(len(script)//2)
         s += script
         return s
 
-    def _calc_bip143_shared_txdigest_fields(self) -> BIP143SharedTxDigestFields:
-        inputs = self.inputs()
-        outputs = self.outputs()
-        hashPrevouts = bh2u(sha256d(bfh(''.join(self.serialize_outpoint(txin) for txin in inputs))))
-        hashSequence = bh2u(sha256d(bfh(''.join(int_to_hex(txin.get('sequence', 0xffffffff - 1), 4) for txin in inputs))))
-        hashOutputs = bh2u(sha256d(bfh(''.join(self.serialize_output(o) for o in outputs))))
-        return BIP143SharedTxDigestFields(hashPrevouts=hashPrevouts,
-                                          hashSequence=hashSequence,
-                                          hashOutputs=hashOutputs)
-
-    def serialize_preimage(self, txin_index: int, *,
-                           bip143_shared_txdigest_fields: BIP143SharedTxDigestFields = None) -> str:
+    def serialize_preimage(self, i):
         nVersion = int_to_hex(self.version, 4)
-        nHashType = int_to_hex(1, 4)  # SIGHASH_ALL
+        nHashType = int_to_hex(1, 4)
         nLocktime = int_to_hex(self.locktime, 4)
         inputs = self.inputs()
         outputs = self.outputs()
-        txin = inputs[txin_index]
+        txin = inputs[i]
+        # TODO: py3 hex
         if self.is_segwit_input(txin):
-            if bip143_shared_txdigest_fields is None:
-                bip143_shared_txdigest_fields = self._calc_bip143_shared_txdigest_fields()
-            hashPrevouts = bip143_shared_txdigest_fields.hashPrevouts
-            hashSequence = bip143_shared_txdigest_fields.hashSequence
-            hashOutputs = bip143_shared_txdigest_fields.hashOutputs
+            hashPrevouts = bh2u(Hash(bfh(''.join(self.serialize_outpoint(txin) for txin in inputs))))
+            hashSequence = bh2u(Hash(bfh(''.join(int_to_hex(txin.get('sequence', 0xffffffff - 1), 4) for txin in inputs))))
+            hashOutputs = bh2u(Hash(bfh(''.join(self.serialize_output(o) for o in outputs))))
             outpoint = self.serialize_outpoint(txin)
             preimage_script = self.get_preimage_script(txin)
             scriptCode = var_int(len(preimage_script) // 2) + preimage_script
@@ -995,8 +1013,7 @@ class Transaction:
             nSequence = int_to_hex(txin.get('sequence', 0xffffffff - 1), 4)
             preimage = nVersion + hashPrevouts + hashSequence + outpoint + scriptCode + amount + nSequence + hashOutputs + nLocktime + nHashType
         else:
-            txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, self.get_preimage_script(txin) if txin_index==k else '')
-                                                   for k, txin in enumerate(inputs))
+            txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, self.get_preimage_script(txin) if i==k else '') for k, txin in enumerate(inputs))
             txouts = var_int(len(outputs)) + ''.join(self.serialize_output(o) for o in outputs)
             preimage = nVersion + txins + txouts + nLocktime + nHashType
         return preimage
@@ -1017,7 +1034,6 @@ class Transaction:
             return network_ser
 
     def serialize_to_network(self, estimate_size=False, witness=True):
-        self.deserialize()
         nVersion = int_to_hex(self.version, 4)
         nLocktime = int_to_hex(self.locktime, 4)
         inputs = self.inputs()
@@ -1042,32 +1058,30 @@ class Transaction:
         if not all_segwit and not self.is_complete():
             return None
         ser = self.serialize_to_network(witness=False)
-        return bh2u(sha256d(bfh(ser))[::-1])
+        return bh2u(Hash(bfh(ser))[::-1])
 
     def wtxid(self):
         self.deserialize()
         if not self.is_complete():
             return None
         ser = self.serialize_to_network(witness=True)
-        return bh2u(sha256d(bfh(ser))[::-1])
+        return bh2u(Hash(bfh(ser))[::-1])
 
     def add_inputs(self, inputs):
         self._inputs.extend(inputs)
         self.raw = None
-        self.BIP69_sort(outputs=False)
 
     def add_outputs(self, outputs):
         self._outputs.extend(outputs)
         self.raw = None
-        self.BIP69_sort(inputs=False)
 
-    def input_value(self) -> int:
+    def input_value(self):
         return sum(x['value'] for x in self.inputs())
 
-    def output_value(self) -> int:
-        return sum(o.value for o in self.outputs())
+    def output_value(self):
+        return sum(val for tp, addr, val in self.outputs())
 
-    def get_fee(self) -> int:
+    def get_fee(self):
         return self.input_value() - self.output_value()
 
     def is_final(self):
@@ -1143,12 +1157,13 @@ class Transaction:
         return s, r
 
     def is_complete(self):
+        if not self.is_partial_originally:
+            return True
         s, r = self.signature_count()
         return r == s
 
     def sign(self, keypairs) -> None:
         # keypairs:  (x_)pubkey -> secret_bytes
-        bip143_shared_txdigest_fields = self._calc_bip143_shared_txdigest_fields()
         for i, txin in enumerate(self.inputs()):
             pubkeys, x_pubkeys = self.get_sorted_pubkeys(txin)
             for j, (pubkey, x_pubkey) in enumerate(zip(pubkeys, x_pubkeys)):
@@ -1160,37 +1175,41 @@ class Transaction:
                     _pubkey = x_pubkey
                 else:
                     continue
-                _logger.info(f"adding signature for {_pubkey}")
+                print_error("adding signature for", _pubkey)
                 sec, compressed = keypairs.get(_pubkey)
-                sig = self.sign_txin(i, sec, bip143_shared_txdigest_fields=bip143_shared_txdigest_fields)
+                sig = self.sign_txin(i, sec)
                 self.add_signature_to_txin(i, j, sig)
 
-        _logger.info(f"is_complete {self.is_complete()}")
+        print_error("is_complete", self.is_complete())
         self.raw = self.serialize()
 
-    def sign_txin(self, txin_index, privkey_bytes, *, bip143_shared_txdigest_fields=None) -> str:
-        pre_hash = sha256d(bfh(self.serialize_preimage(txin_index,
-                                                       bip143_shared_txdigest_fields=bip143_shared_txdigest_fields)))
+    def sign_txin(self, txin_index, privkey_bytes) -> str:
+        pre_hash = Hash(bfh(self.serialize_preimage(txin_index)))
         privkey = ecc.ECPrivkey(privkey_bytes)
         sig = privkey.sign_transaction(pre_hash)
         sig = bh2u(sig) + '01'
         return sig
 
-    def get_outputs_for_UI(self) -> Sequence[TxOutputForUI]:
+    def get_outputs(self):
+        """convert pubkeys to addresses"""
         outputs = []
         for o in self.outputs():
             if o.type == TYPE_ADDRESS:
                 addr = o.address
             elif o.type == TYPE_PUBKEY:
-                addr = 'PUBKEY ' + o.address
+                # TODO do we really want this conversion? it's not really that address after all
+                addr = bitcoin.public_key_to_p2pkh(bfh(o.address))
             else:
                 addr = 'SCRIPT ' + o.address
-            outputs.append(TxOutputForUI(addr, o.value))      # consider using yield
+            outputs.append((addr, o.value))      # consider using yield (addr, v)
         return outputs
 
-    def has_address(self, addr: str) -> bool:
-        return (addr in (o.address for o in self.outputs())) \
-               or (addr in (txin.get("address") for txin in self.inputs()))
+    def get_output_addresses(self):
+        return [addr for addr, val in self.get_outputs()]
+
+
+    def has_address(self, addr):
+        return (addr in self.get_output_addresses()) or (addr in (tx.get("address") for tx in self.inputs()))
 
     def as_dict(self):
         if self.raw is None:
@@ -1204,26 +1223,19 @@ class Transaction:
         return out
 
 
-def tx_from_str(txt: str) -> str:
-    """Sanitizes tx-describing input (json or raw hex or base43) into
-    raw hex transaction."""
-    assert isinstance(txt, str), f"txt must be str, not {type(txt)}"
+def tx_from_str(txt):
+    "json or raw hexadecimal"
+    import json
     txt = txt.strip()
     if not txt:
         raise ValueError("empty string")
-    # try hex
     try:
         bfh(txt)
+        is_hex = True
+    except:
+        is_hex = False
+    if is_hex:
         return txt
-    except:
-        pass
-    # try base43
-    try:
-        return base_decode(txt, length=None, base=43).hex()
-    except:
-        pass
-    # try json
-    import json
     tx_dict = json.loads(str(txt))
     assert "hex" in tx_dict.keys()
     return tx_dict["hex"]

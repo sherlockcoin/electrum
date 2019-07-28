@@ -1,6 +1,6 @@
 from kivy.app import App
 from kivy.factory import Factory
-from kivy.properties import ObjectProperty, BooleanProperty
+from kivy.properties import ObjectProperty
 from kivy.lang import Builder
 
 Builder.load_string('''
@@ -27,20 +27,7 @@ Builder.load_string('''
                 on_text: popup.on_currency(self.text)
 
         Widget:
-            size_hint: 1, 0.05
-
-        BoxLayout:
-            orientation: 'horizontal'
-            size_hint: 1, 0.2
-            Label:
-                text: _('History rates')
-            CheckBox:
-                id:hist
-                active: popup.has_history_rates
-                on_active: popup.on_checkbox_history(self.active)
-
-        Widget:
-            size_hint: 1, 0.05
+            size_hint: 1, 0.1
 
         BoxLayout:
             orientation: 'horizontal'
@@ -54,7 +41,7 @@ Builder.load_string('''
                 on_text: popup.on_exchange(self.text)
 
         Widget:
-            size_hint: 1, 0.1
+            size_hint: 1, 0.2
 
         BoxLayout:
             orientation: 'horizontal'
@@ -85,30 +72,20 @@ from functools import partial
 class FxDialog(Factory.Popup):
 
     def __init__(self, app, plugins, config, callback):
+        Factory.Popup.__init__(self)
         self.app = app
         self.config = config
         self.callback = callback
         self.fx = self.app.fx
-        self.has_history_rates = self.fx.get_history_config(default=True)
-
-        Factory.Popup.__init__(self)
+        self.fx.set_history_config(True)
         self.add_currencies()
 
     def add_exchanges(self):
+        exchanges = sorted(self.fx.get_exchanges_by_ccy(self.fx.get_currency(), True)) if self.fx.is_enabled() else []
+        mx = self.fx.exchange.name() if self.fx.is_enabled() else ''
         ex = self.ids.exchanges
-        if self.fx.is_enabled():
-            exchanges = sorted(self.fx.get_exchanges_by_ccy(self.fx.get_currency(), self.has_history_rates))
-            mx = self.fx.exchange.name()
-            if mx in exchanges:
-                ex.text = mx
-            elif exchanges:
-                ex.text = exchanges[0]
-            else:
-                ex.text = ''
-        else:
-            exchanges = []
-            ex.text = ''
         ex.values = exchanges
+        ex.text = (mx if mx in exchanges else exchanges[0]) if self.fx.is_enabled() else ''
 
     def on_exchange(self, text):
         if not text:
@@ -117,16 +94,10 @@ class FxDialog(Factory.Popup):
             self.fx.set_exchange(text)
 
     def add_currencies(self):
-        currencies = [_('None')] + self.fx.get_currencies(self.has_history_rates)
+        currencies = [_('None')] + self.fx.get_currencies(True)
         my_ccy = self.fx.get_currency() if self.fx.is_enabled() else _('None')
         self.ids.ccy.values = currencies
         self.ids.ccy.text = my_ccy
-
-    def on_checkbox_history(self, checked):
-        self.fx.set_history_config(checked)
-        self.has_history_rates = checked
-        self.add_currencies()
-        self.on_currency(self.ids.ccy.text)
 
     def on_currency(self, ccy):
         b = (ccy != _('None'))

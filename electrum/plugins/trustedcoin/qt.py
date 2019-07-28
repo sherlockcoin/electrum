@@ -25,26 +25,20 @@
 
 from functools import partial
 import threading
-import sys
-import os
+from threading import Thread
+import re
+from decimal import Decimal
 
-from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import QObject, pyqtSignal
-from PyQt5.QtWidgets import (QTextEdit, QVBoxLayout, QLabel, QGridLayout, QHBoxLayout,
-                             QRadioButton, QCheckBox, QLineEdit)
+from PyQt5.QtGui import *
+from PyQt5.QtCore import *
 
-from electrum.gui.qt.util import (read_QIcon, WindowModalDialog, WaitingDialog, OkButton,
-                                  CancelButton, Buttons, icon_path, WWLabel, CloseButton)
+from electrum.gui.qt.util import *
 from electrum.gui.qt.qrcodewidget import QRCodeWidget
 from electrum.gui.qt.amountedit import AmountEdit
 from electrum.gui.qt.main_window import StatusBarButton
-from electrum.gui.qt.installwizard import InstallWizard
 from electrum.i18n import _
 from electrum.plugin import hook
-from electrum.util import is_valid_email
-from electrum.logging import Logger
-from electrum.base_wizard import GoBack
-
+from electrum.util import PrintError, is_valid_email
 from .trustedcoin import TrustedCoinPlugin, server
 
 
@@ -53,13 +47,12 @@ class TOS(QTextEdit):
     error_signal = pyqtSignal(object)
 
 
-class HandlerTwoFactor(QObject, Logger):
+class HandlerTwoFactor(QObject, PrintError):
 
     def __init__(self, plugin, window):
-        QObject.__init__(self)
+        super().__init__()
         self.plugin = plugin
         self.window = window
-        Logger.__init__(self)
 
     def prompt_user_for_otp(self, wallet, tx, on_success, on_failure):
         if not isinstance(wallet, self.plugin.wallet_class):
@@ -67,16 +60,16 @@ class HandlerTwoFactor(QObject, Logger):
         if wallet.can_sign_without_server():
             return
         if not wallet.keystores['x3/'].get_tx_derivations(tx):
-            self.logger.info("twofactor: xpub3 not needed")
+            self.print_error("twofactor: xpub3 not needed")
             return
         window = self.window.top_level_window()
         auth_code = self.plugin.auth_dialog(window)
-        WaitingDialog(parent=window,
-                      message=_('Waiting for TrustedCoin server to sign transaction...'),
-                      task=lambda: wallet.on_otp(tx, auth_code),
-                      on_success=lambda *args: on_success(tx),
-                      on_error=on_failure)
-
+        try:
+            wallet.on_otp(tx, auth_code)
+        except:
+            on_failure(sys.exc_info())
+            return
+        on_success(tx)
 
 class Plugin(TrustedCoinPlugin):
 
@@ -97,7 +90,7 @@ class Plugin(TrustedCoinPlugin):
             action = lambda: window.show_message(msg)
         else:
             action = partial(self.settings_dialog, window)
-        button = StatusBarButton(read_QIcon("trustedcoin-status.png"),
+        button = StatusBarButton(QIcon(":icons/trustedcoin-status.png"),
                                  _("TrustedCoin"), action)
         window.statusBar().addPermanentWidget(button)
         self.start_request_thread(window.wallet)
@@ -125,20 +118,10 @@ class Plugin(TrustedCoinPlugin):
     def prompt_user_for_otp(self, wallet, tx, on_success, on_failure):
         wallet.handler_2fa.prompt_user_for_otp(wallet, tx, on_success, on_failure)
 
-    def waiting_dialog_for_billing_info(self, window, *, on_finished=None):
-        def task():
-            return self.request_billing_info(window.wallet, suppress_connection_error=False)
-        def on_error(exc_info):
-            e = exc_info[1]
-            window.show_error("{header}\n{exc}\n\n{tor}"
-                              .format(header=_('Error getting TrustedCoin account info.'),
-                                      exc=repr(e),
-                                      tor=_('If you keep experiencing network problems, try using a Tor proxy.')))
-        return WaitingDialog(parent=window,
-                             message=_('Requesting account info from TrustedCoin server...'),
-                             task=task,
-                             on_success=on_finished,
-                             on_error=on_error)
+    def waiting_dialog(self, window, on_finished=None):
+        task = partial(self.request_billing_info, window.wallet)
+        return WaitingDialog(window, 'Getting billing information...', task,
+                             on_finished)
 
     @hook
     def abort_send(self, window):
@@ -148,13 +131,14 @@ class Plugin(TrustedCoinPlugin):
         if wallet.can_sign_without_server():
             return
         if wallet.billing_info is None:
-            self.waiting_dialog_for_billing_info(window)
+            self.start_request_thread(wallet)
+            window.show_error(_('Requesting account info from TrustedCoin server...') + '\n' +
+                                _('Please try again.'))
             return True
         return False
 
     def settings_dialog(self, window):
-        self.waiting_dialog_for_billing_info(window,
-                                             on_finished=partial(self.show_settings_dialog, window))
+        self.waiting_dialog(window, partial(self.show_settings_dialog, window))
 
     def show_settings_dialog(self, window, success):
         if not success:
@@ -168,7 +152,7 @@ class Plugin(TrustedCoinPlugin):
         hbox = QHBoxLayout()
 
         logo = QLabel()
-        logo.setPixmap(QPixmap(icon_path("trustedcoin-status.png")))
+        logo.setPixmap(QPixmap(":icons/trustedcoin-status.png"))
         msg = _('This wallet is protected by TrustedCoin\'s two-factor authentication.') + '<br/>'\
               + _("For more information, visit") + " <a href=\"https://api.trustedcoin.com/#/electrum-help\">https://api.trustedcoin.com/#/electrum-help</a>"
         label = QLabel(msg)
@@ -211,9 +195,21 @@ class Plugin(TrustedCoinPlugin):
         vbox.addLayout(Buttons(CloseButton(d)))
         d.exec_()
 
-    def go_online_dialog(self, wizard: InstallWizard):
+    def on_buy(self, window, k, v, d):
+        d.close()
+        if window.pluginsdialog:
+            window.pluginsdialog.close()
+        wallet = window.wallet
+        uri = "bitcoin:" + wallet.billing_info['billing_address'] + "?message=TrustedCoin %d Prepaid Transactions&amount="%k + str(Decimal(v)/100000000)
+        wallet.is_billing = True
+        window.pay_to_URI(uri)
+        window.payto_e.setFrozen(True)
+        window.message_e.setFrozen(True)
+        window.amount_e.setFrozen(True)
+
+    def go_online_dialog(self, wizard):
         msg = [
-            _("Your wallet file is: {}.").format(os.path.abspath(wizard.path)),
+            _("Your wallet file is: {}.").format(os.path.abspath(wizard.storage.path)),
             _("You need to be online in order to complete the creation of "
               "your wallet.  If you generated your seed on an offline "
               'computer, click on "{}" to close this window, move your '
@@ -222,13 +218,8 @@ class Plugin(TrustedCoinPlugin):
             _('If you are online, click on "{}" to continue.').format(_('Next'))
         ]
         msg = '\n\n'.join(msg)
-        wizard.reset_stack()
-        try:
-            wizard.confirm_dialog(title='', message=msg, run_next = lambda x: wizard.run('accept_terms_of_use'))
-        except GoBack:
-            # user clicked 'Cancel' and decided to move wallet file manually
-            wizard.create_storage(wizard.path)
-            raise
+        wizard.stack = []
+        wizard.confirm_dialog(title='', message=msg, run_next = lambda x: wizard.run('accept_terms_of_use'))
 
     def accept_terms_of_use(self, window):
         vbox = QVBoxLayout()
@@ -251,9 +242,10 @@ class Plugin(TrustedCoinPlugin):
             try:
                 tos = server.get_terms_of_service()
             except Exception as e:
-                self.logger.exception('Could not retrieve Terms of Service')
+                import traceback
+                traceback.print_exc(file=sys.stderr)
                 tos_e.error_signal.emit(_('Could not retrieve Terms of Service:')
-                                        + '\n' + repr(e))
+                                        + '\n' + str(e))
                 return
             self.TOS = tos
             tos_e.tos_signal.emit()
@@ -273,7 +265,7 @@ class Plugin(TrustedCoinPlugin):
 
         tos_e.tos_signal.connect(on_result)
         tos_e.error_signal.connect(on_error)
-        t = threading.Thread(target=request_TOS)
+        t = Thread(target=request_TOS)
         t.setDaemon(True)
         t.start()
         email_e.textChanged.connect(set_enabled)

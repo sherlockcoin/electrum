@@ -37,6 +37,8 @@ import os
 import math
 import hashlib
 
+from .pem import *
+
 
 def SHA1(x):
     return hashlib.sha1(x).digest()
@@ -123,6 +125,7 @@ def numBits(n):
      '8':4, '9':4, 'a':4, 'b':4,
      'c':4, 'd':4, 'e':4, 'f':4,
      }[s[0]]
+    return int(math.floor(math.log(n, 2))+1)
 
 def numBytes(n):
     if n==0:

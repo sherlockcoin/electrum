@@ -3,28 +3,13 @@ import hashlib
 import json
 import sys
 import traceback
-from typing import Union
 
 import base64
 
 from electrum.plugin import BasePlugin, hook
 from electrum.crypto import aes_encrypt_with_iv, aes_decrypt_with_iv
 from electrum.i18n import _
-from electrum.util import log_exceptions, ignore_exceptions, make_aiohttp_session
-from electrum.network import Network
-
-
-class ErrorConnectingServer(Exception):
-    def __init__(self, reason: Union[str, Exception] = None):
-        self.reason = reason
-
-    def __str__(self):
-        header = _("Error connecting to {} server").format('Labels')
-        reason = self.reason
-        if isinstance(reason, BaseException):
-            reason = repr(reason)
-        return f"{header}: {reason}" if reason else header
-
+from electrum.util import aiosafe, make_aiohttp_session
 
 class LabelsPlugin(BasePlugin):
 
@@ -32,6 +17,7 @@ class LabelsPlugin(BasePlugin):
         BasePlugin.__init__(self, parent, config, name)
         self.target_host = 'labels.electrum.org'
         self.wallets = {}
+        self.proxy = None
 
     def encode(self, wallet, msg):
         password, iv, wallet_id = self.wallets[wallet]
@@ -53,7 +39,7 @@ class LabelsPlugin(BasePlugin):
         return nonce
 
     def set_nonce(self, wallet, nonce):
-        self.logger.info(f"set {wallet.basename()} nonce to {nonce}")
+        self.print_error("set", wallet.basename(), "nonce to", nonce)
         wallet.storage.put("wallet_nonce", nonce)
 
     @hook
@@ -68,33 +54,25 @@ class LabelsPlugin(BasePlugin):
                   "walletNonce": nonce,
                   "externalId": self.encode(wallet, item),
                   "encryptedLabel": self.encode(wallet, label)}
-        asyncio.run_coroutine_threadsafe(self.do_post_safe("/label", bundle), wallet.network.asyncio_loop)
+        asyncio.get_event_loop().create_task(self.do_post_safe("/label", bundle))
         # Caller will write the wallet
         self.set_nonce(wallet, nonce + 1)
 
-    @ignore_exceptions
-    @log_exceptions
+    @aiosafe
     async def do_post_safe(self, *args):
         await self.do_post(*args)
 
     async def do_get(self, url = "/labels"):
         url = 'https://' + self.target_host + url
-        network = Network.get_instance()
-        proxy = network.proxy if network else None
-        async with make_aiohttp_session(proxy) as session:
+        async with make_aiohttp_session(self.proxy) as session:
             async with session.get(url) as result:
                 return await result.json()
 
     async def do_post(self, url = "/labels", data=None):
         url = 'https://' + self.target_host + url
-        network = Network.get_instance()
-        proxy = network.proxy if network else None
-        async with make_aiohttp_session(proxy) as session:
+        async with make_aiohttp_session(self.proxy) as session:
             async with session.post(url, json=data) as result:
-                try:
-                    return await result.json()
-                except Exception as e:
-                    raise Exception('Could not decode: ' + await result.text()) from e
+                return await result.json()
 
     async def push_thread(self, wallet):
         wallet_data = self.wallets.get(wallet, None)
@@ -109,7 +87,7 @@ class LabelsPlugin(BasePlugin):
                 encoded_key = self.encode(wallet, key)
                 encoded_value = self.encode(wallet, value)
             except:
-                self.logger.info(f'cannot encode {repr(key)} {repr(value)}')
+                self.print_error('cannot encode', repr(key), repr(value))
                 continue
             bundle["labels"].append({'encryptedLabel': encoded_value,
                                      'externalId': encoded_key})
@@ -121,13 +99,10 @@ class LabelsPlugin(BasePlugin):
             raise Exception('Wallet {} not loaded'.format(wallet))
         wallet_id = wallet_data[2]
         nonce = 1 if force else self.get_nonce(wallet) - 1
-        self.logger.info(f"asking for labels since nonce {nonce}")
-        try:
-            response = await self.do_get("/labels/since/%d/for/%s" % (nonce, wallet_id))
-        except Exception as e:
-            raise ErrorConnectingServer(e) from e
+        self.print_error("asking for labels since nonce", nonce)
+        response = await self.do_get("/labels/since/%d/for/%s" % (nonce, wallet_id))
         if response["labels"] is None:
-            self.logger.info('no new labels')
+            self.print_error('no new labels')
             return
         result = {}
         for label in response["labels"]:
@@ -140,7 +115,7 @@ class LabelsPlugin(BasePlugin):
                 json.dumps(key)
                 json.dumps(value)
             except:
-                self.logger.info(f'error: no json {key}')
+                self.print_error('error: no json', key)
                 continue
             result[key] = value
 
@@ -148,32 +123,25 @@ class LabelsPlugin(BasePlugin):
             if force or not wallet.labels.get(key):
                 wallet.labels[key] = value
 
-        self.logger.info(f"received {len(response)} labels")
+        self.print_error("received %d labels" % len(response))
         # do not write to disk because we're in a daemon thread
         wallet.storage.put('labels', wallet.labels)
         self.set_nonce(wallet, response["nonce"] + 1)
         self.on_pulled(wallet)
 
-    @ignore_exceptions
-    @log_exceptions
+    @aiosafe
     async def pull_safe_thread(self, wallet, force):
-        try:
-            await self.pull_thread(wallet, force)
-        except ErrorConnectingServer as e:
-            self.logger.info(repr(e))
+        await self.pull_thread(wallet, force)
 
     def pull(self, wallet, force):
-        if not wallet.network: raise Exception(_('You are offline.'))
         return asyncio.run_coroutine_threadsafe(self.pull_thread(wallet, force), wallet.network.asyncio_loop).result()
 
     def push(self, wallet):
-        if not wallet.network: raise Exception(_('You are offline.'))
         return asyncio.run_coroutine_threadsafe(self.push_thread(wallet), wallet.network.asyncio_loop).result()
 
     def start_wallet(self, wallet):
-        if not wallet.network: return  # 'offline' mode
         nonce = self.get_nonce(wallet)
-        self.logger.info(f"wallet {wallet.basename()} nonce is {nonce}")
+        self.print_error("wallet", wallet.basename(), "nonce is", nonce)
         mpk = wallet.get_fingerprint()
         if not mpk:
             return
@@ -183,7 +151,14 @@ class LabelsPlugin(BasePlugin):
         wallet_id = hashlib.sha256(mpk).hexdigest()
         self.wallets[wallet] = (password, iv, wallet_id)
         # If there is an auth token we can try to actually start syncing
-        asyncio.run_coroutine_threadsafe(self.pull_safe_thread(wallet, False), wallet.network.asyncio_loop)
+        asyncio.get_event_loop().create_task(self.pull_safe_thread(wallet, False))
+        self.proxy = wallet.network.proxy
+        wallet.network.register_callback(self.set_proxy, ['proxy_set'])
 
     def stop_wallet(self, wallet):
+        wallet.network.unregister_callback('proxy_set')
         self.wallets.pop(wallet, None)
+
+    def set_proxy(self, evt_name, new_proxy):
+        self.proxy = new_proxy
+        self.print_error("proxy set")

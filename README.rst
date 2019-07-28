@@ -32,7 +32,7 @@ Qt interface, install the Qt dependencies::
     sudo apt-get install python3-pyqt5
 
 If you downloaded the official package (tar.gz), you can run
-Electrum from its root directory without installing it on your
+Electrum from its root directory, without installing it on your
 system; all the python dependencies are included in the 'packages'
 directory. To run Electrum from its root directory, just do::
 
@@ -41,10 +41,10 @@ directory. To run Electrum from its root directory, just do::
 You can also install Electrum on your system, by running this command::
 
     sudo apt-get install python3-setuptools
-    python3 -m pip install .[fast]
+    pip3 install .[fast]
 
 This will download and install the Python dependencies used by
-Electrum instead of using the 'packages' directory.
+Electrum, instead of using the 'packages' directory.
 The 'fast' extra contains some optional dependencies that we think
 are often useful but they are not strictly needed.
 
@@ -64,8 +64,16 @@ Check out the code from GitHub::
 
 Run install (this should install dependencies)::
 
-    python3 -m pip install .[fast]
+    pip3 install .[fast]
 
+Render the SVG icons to PNGs (optional)::
+
+    for i in lock unlock confirmed status_lagging status_disconnected status_connected_proxy status_connected status_waiting preferences; do convert -background none icons/$i.svg icons/$i.png; done
+
+Compile the icons file for Qt::
+
+    sudo apt-get install pyqt5-dev-tools
+    pyrcc5 icons.qrc -o electrum/gui/qt/icons_rc.py
 
 Compile the protobuf description file::
 
@@ -75,7 +83,7 @@ Compile the protobuf description file::
 Create translations (optional)::
 
     sudo apt-get install python-requests gettext
-    ./contrib/pull_locale
+    ./contrib/make_locale
 
 
 
@@ -83,31 +91,25 @@ Create translations (optional)::
 Creating Binaries
 =================
 
-Linux (tarball)
----------------
 
-See :code:`contrib/build-linux/README.md`.
+To create binaries, create the 'packages' directory::
 
+    ./contrib/make_packages
 
-Linux (AppImage)
-----------------
-
-See :code:`contrib/build-linux/appimage/README.md`.
-
+This directory contains the python dependencies used by Electrum.
 
 Mac OS X / macOS
-----------------
+--------
 
-See :code:`contrib/osx/README.md`.
-
+See `contrib/build-osx/`.
 
 Windows
 -------
 
-See :code:`contrib/build-wine/README.md`.
+See `contrib/build-wine/`.
 
 
 Android
 -------
 
-See :code:`electrum/gui/kivy/Readme.md`.
+See `electrum/gui/kivy/Readme.md` file.

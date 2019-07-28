@@ -23,12 +23,10 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from PyQt5.QtGui import QTextCursor
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QCompleter, QPlainTextEdit, QApplication
-
+from PyQt5.QtGui import *
+from PyQt5.QtCore import *
+from PyQt5.QtWidgets import *
 from .util import ButtonsTextEdit
-
 
 class CompletionTextEdit(ButtonsTextEdit):
 
@@ -106,10 +104,10 @@ class CompletionTextEdit(ButtonsTextEdit):
         self.completer.complete(cr)
 
     def is_special_key(self, e):
-        if self.completer and self.completer.popup().isVisible():
-            if e.key() in (Qt.Key_Enter, Qt.Key_Return):
+        if self.completer != None and self.completer.popup().isVisible():
+            if e.key() in [Qt.Key_Enter, Qt.Key_Return]:
                 return True
-        if e.key() == Qt.Key_Tab:
+        if e.key() in [Qt.Key_Tab, Qt.Key_Down, Qt.Key_Up]:
             return True
         return False
 

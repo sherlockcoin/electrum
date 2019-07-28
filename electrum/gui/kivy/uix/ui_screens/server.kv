@@ -23,7 +23,7 @@ Popup:
                 height: '36dp'
                 size_hint_x: 3
                 size_hint_y: None
-                text: app.network.get_parameters().host
+                text: app.server_host
             Label:
                 height: '36dp'
                 size_hint_x: 1
@@ -36,7 +36,7 @@ Popup:
                 height: '36dp'
                 size_hint_x: 3
                 size_hint_y: None
-                text: app.network.get_parameters().port
+                text: app.server_port
             Widget
             Button:
                 id: chooser
@@ -58,5 +58,5 @@ Popup:
                 on_release:
                     net_params = app.network.get_parameters()
                     net_params = net_params._replace(host=str(root.ids.host.text), port=str(root.ids.port.text))
-                    app.network.run_from_another_thread(app.network.set_parameters(net_params))
+                    app.network.set_parameters(net_params)
                     nd.dismiss()

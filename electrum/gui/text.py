@@ -1,23 +1,19 @@
-import tty
-import sys
-import curses
-import datetime
-import locale
+import tty, sys
+import curses, datetime, locale
 from decimal import Decimal
 import getpass
-import logging
 
 import electrum
-from electrum.util import format_satoshis
+from electrum.util import format_satoshis, set_verbosity
 from electrum.bitcoin import is_address, COIN, TYPE_ADDRESS
 from electrum.transaction import TxOutput
 from electrum.wallet import Wallet
 from electrum.storage import WalletStorage
-from electrum.network import NetworkParameters, TxBroadcastError, BestEffortRequestFailed
+from electrum.network import NetworkParameters
 from electrum.interface import deserialize_server
-from electrum.logging import console_stderr_handler
 
-_ = lambda x:x  # i18n
+_ = lambda x:x
+
 
 
 class ElectrumGui:
@@ -54,7 +50,7 @@ class ElectrumGui:
         self.set_cursor(0)
         self.w = curses.newwin(10, 50, 5, 5)
 
-        console_stderr_handler.setLevel(logging.CRITICAL)
+        set_verbosity(False)
         self.tab = 0
         self.pos = 0
         self.popup_pos = 0
@@ -66,7 +62,7 @@ class ElectrumGui:
         self.history = None
 
         if self.network:
-            self.network.register_callback(self.update, ['wallet_updated', 'network_updated'])
+            self.network.register_callback(self.update, ['updated'])
 
         self.tab_names = [_("History"), _("Send"), _("Receive"), _("Addresses"), _("Contacts"), _("Banner")]
         self.num_tabs = len(self.tab_names)
@@ -93,7 +89,7 @@ class ElectrumGui:
         self.set_cursor(0)
         return s
 
-    def update(self, event, *args):
+    def update(self, event):
         self.update_history()
         if self.tab == 0:
             self.print_history()
@@ -362,25 +358,22 @@ class ElectrumGui:
             tx = self.wallet.mktx([TxOutput(TYPE_ADDRESS, self.str_recipient, amount)],
                                   password, self.config, fee)
         except Exception as e:
-            self.show_message(repr(e))
+            self.show_message(str(e))
             return
 
         if self.str_description:
             self.wallet.labels[tx.txid()] = self.str_description
 
         self.show_message(_("Please wait..."), getchar=False)
-        try:
-            self.network.run_from_another_thread(self.network.broadcast_transaction(tx))
-        except TxBroadcastError as e:
-            msg = e.get_message_for_gui()
-            self.show_message(msg)
-        except BestEffortRequestFailed as e:
-            msg = repr(e)
-            self.show_message(msg)
-        else:
+        status, msg = self.network.broadcast_transaction_from_non_network_thread(tx)
+
+        if status:
             self.show_message(_('Payment sent.'))
             self.do_clear()
             #self.update_contacts_tab()
+        else:
+            self.show_message(_('Error'))
+
 
     def show_message(self, message, getchar = True):
         w = self.w
@@ -417,8 +410,7 @@ class ElectrumGui:
                         return False
             if out.get('server') or out.get('proxy'):
                 proxy = electrum.network.deserialize_proxy(out.get('proxy')) if out.get('proxy') else proxy_config
-                net_params = NetworkParameters(host, port, protocol, proxy, auto_connect)
-                self.network.run_from_another_thread(self.network.set_parameters(net_params))
+                self.network.set_parameters(NetworkParameters(host, port, protocol, proxy, auto_connect))
 
     def settings_dialog(self):
         fee = str(Decimal(self.config.fee_per_kb()) / COIN)

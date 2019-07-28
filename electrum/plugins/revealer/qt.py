@@ -1,47 +1,44 @@
 '''
 
 Revealer
-Do you have something to hide?
-Secret backup plug-in for the electrum wallet.
+So you have something to hide?
+
+plug-in for the electrum wallet.
+
+Features:
+    - Deep Cold multi-factor backup solution
+    - Safety - One time pad security
+    - Redundancy - Trustless printing & distribution
+    - Encrypt your seedphrase or any secret you want for your revealer
+    - Based on crypto by legendary cryptographers Naor and Shamir
 
 Tiago Romagnani Silveira, 2017
-
 
 '''
 
 import os
 import random
-import traceback
-from decimal import Decimal
-from functools import partial
-import sys
-
 import qrcode
+import traceback
+from hashlib import sha256
+from decimal import Decimal
+import binascii
+
 from PyQt5.QtPrintSupport import QPrinter
-from PyQt5.QtCore import Qt, QRectF, QRect, QSizeF, QUrl, QPoint, QSize
-from PyQt5.QtGui import (QPixmap, QImage, QBitmap, QPainter, QFontDatabase, QPen, QFont,
-                         QColor, QDesktopServices, qRgba, QPainterPath)
-from PyQt5.QtWidgets import (QGridLayout, QVBoxLayout, QHBoxLayout, QLabel,
-                             QPushButton, QLineEdit)
 
-from electrum.plugin import hook
+from electrum.plugin import BasePlugin, hook
 from electrum.i18n import _
-from electrum.util import make_dir, InvalidPassword, UserCancelled
-from electrum.gui.qt.util import (read_QIcon, EnterButton, WWLabel, icon_path,
-                                  WindowModalDialog, Buttons, CloseButton, OkButton)
+from electrum.util import to_bytes, make_dir
+from electrum.gui.qt.util import *
 from electrum.gui.qt.qrtextedit import ScanQRTextEdit
-from electrum.gui.qt.main_window import StatusBarButton
 
-from .revealer import RevealerPlugin
+from .hmac_drbg import DRBG
 
-
-class Plugin(RevealerPlugin):
-
-    MAX_PLAINTEXT_LEN = 189  # chars
+class Plugin(BasePlugin):
 
     def __init__(self, parent, config, name):
-        RevealerPlugin.__init__(self, parent, config, name)
-        self.base_dir = os.path.join(config.electrum_path(), 'revealer')
+        BasePlugin.__init__(self, parent, config, name)
+        self.base_dir = config.electrum_path()+'/revealer/'
 
         if self.config.get('calibration_h') is None:
             self.config.set_key('calibration_h', 0)
@@ -51,6 +48,8 @@ class Plugin(RevealerPlugin):
         self.calibration_h = self.config.get('calibration_h')
         self.calibration_v = self.config.get('calibration_v')
 
+        self.version = '1'
+        self.size = (159, 97)
         self.f_size = QSize(1014*2, 642*2)
         self.abstand_h = 21
         self.abstand_v = 34
@@ -58,13 +57,11 @@ class Plugin(RevealerPlugin):
         self.rawnoise = False
         make_dir(self.base_dir)
 
-        self.extension = False
-
     @hook
-    def create_status_bar(self, parent):
-        b = StatusBarButton(read_QIcon('revealer.png'), "Revealer "+_("secret backup utility"),
-                            partial(self.setup_dialog, parent))
-        parent.addPermanentWidget(b)
+    def set_seed(self, seed, has_extension, parent):
+        self.cseed = seed.upper()
+        self.has_extension = has_extension
+        parent.addButton(':icons/revealer.png', partial(self.setup_dialog, parent), "Revealer"+_(" secret backup utility"))
 
     def requires_settings(self):
         return True
@@ -72,76 +69,58 @@ class Plugin(RevealerPlugin):
     def settings_widget(self, window):
         return EnterButton(_('Printer Calibration'), partial(self.calibration_dialog, window))
 
-    def password_dialog(self, msg=None, parent=None):
-        from electrum.gui.qt.password_dialog import PasswordDialog
-        parent = parent or self
-        d = PasswordDialog(parent, msg)
-        return d.run()
-
-    def get_seed(self):
-        password = None
-        if self.wallet.has_keystore_encryption():
-            password = self.password_dialog(parent=self.d.parent())
-            if not password:
-                raise UserCancelled()
-
-        keystore = self.wallet.get_keystore()
-        if not keystore or not keystore.has_seed():
-            return
-        self.extension = bool(keystore.get_passphrase(password))
-        return keystore.get_seed(password)
-
     def setup_dialog(self, window):
-        self.wallet = window.parent().wallet
-        self.update_wallet_name(self.wallet)
+        self.update_wallet_name(window.parent().parent().wallet)
         self.user_input = False
-
-        self.d = WindowModalDialog(window, "Setup Dialog")
-        self.d.setMinimumWidth(500)
-        self.d.setMinimumHeight(210)
-        self.d.setMaximumHeight(320)
-        self.d.setContentsMargins(11,11,1,1)
-
-        self.hbox = QHBoxLayout(self.d)
-        vbox = QVBoxLayout()
+        self.noise_seed = False
+        self.d = WindowModalDialog(window, "Revealer")
+        self.d.setMinimumWidth(420)
+        vbox = QVBoxLayout(self.d)
+        vbox.addSpacing(21)
         logo = QLabel()
-        self.hbox.addWidget(logo)
-        logo.setPixmap(QPixmap(icon_path('revealer.png')))
-        logo.setAlignment(Qt.AlignLeft)
-        self.hbox.addSpacing(16)
-        vbox.addWidget(WWLabel("<b>"+_("Revealer Secret Backup Plugin")+"</b><br>"
-                                    +_("To encrypt your backup, first we need to load some noise.")+"<br/>"))
-        vbox.addSpacing(7)
-        bcreate = QPushButton(_("Create a new Revealer"))
-        bcreate.setMaximumWidth(181)
-        bcreate.setDefault(True)
-        vbox.addWidget(bcreate, Qt.AlignCenter)
+        vbox.addWidget(logo)
+        logo.setPixmap(QPixmap(':icons/revealer.png'))
+        logo.setAlignment(Qt.AlignCenter)
+        vbox.addSpacing(42)
+
         self.load_noise = ScanQRTextEdit()
         self.load_noise.setTabChangesFocus(True)
         self.load_noise.textChanged.connect(self.on_edit)
         self.load_noise.setMaximumHeight(33)
-        self.hbox.addLayout(vbox)
-        vbox.addWidget(WWLabel(_("or type an existing revealer code below and click 'next':")))
+
+        vbox.addWidget(WWLabel("<b>"+_("Enter your physical revealer code:")+"<b>"))
         vbox.addWidget(self.load_noise)
-        vbox.addSpacing(3)
+        vbox.addSpacing(11)
+
         self.next_button = QPushButton(_("Next"), self.d)
+        self.next_button.setDefault(True)
         self.next_button.setEnabled(False)
         vbox.addLayout(Buttons(self.next_button))
         self.next_button.clicked.connect(self.d.close)
         self.next_button.clicked.connect(partial(self.cypherseed_dialog, window))
-        vbox.addWidget(
-            QLabel("<b>" + _("Warning") + "</b>: " + _("Each revealer should be used only once.")
-                   +"<br>"+_("more information at <a href=\"https://revealer.cc/faq\">https://revealer.cc/faq</a>")))
+        vbox.addSpacing(21)
+
+        vbox.addWidget(WWLabel(_("or, alternatively: ")))
+        bcreate = QPushButton(_("Create a digital Revealer"))
 
         def mk_digital():
             try:
                 self.make_digital(self.d)
             except Exception:
-                self.logger.exception('')
+                traceback.print_exc(file=sys.stdout)
             else:
                 self.cypherseed_dialog(window)
 
         bcreate.clicked.connect(mk_digital)
+
+        vbox.addWidget(bcreate)
+        vbox.addSpacing(11)
+        vbox.addWidget(QLabel(''.join([ "<b>"+_("WARNING")+ "</b>:" + _("Printing a revealer and encrypted seed"), '<br/>',
+                                       _("on the same printer is not trustless towards the printer."), '<br/>',
+                                       ])))
+        vbox.addSpacing(11)
+        vbox.addLayout(Buttons(CloseButton(self.d)))
+
         return bool(self.d.exec_())
 
     def get_noise(self):
@@ -149,152 +128,146 @@ class Plugin(RevealerPlugin):
         return ''.join(text.split()).lower()
 
     def on_edit(self):
-        txt = self.get_noise()
-        versioned_seed = self.get_versioned_seed_from_user_input(txt)
-        if versioned_seed:
-            self.versioned_seed = versioned_seed
-        self.user_input = bool(versioned_seed)
-        self.next_button.setEnabled(bool(versioned_seed))
+        s = self.get_noise()
+        b = self.is_noise(s)
+        if b:
+            self.noise_seed = s[1:-3]
+            self.user_input = True
+        self.next_button.setEnabled(b)
+
+    def code_hashid(self, txt):
+        x = to_bytes(txt, 'utf8')
+        hash = sha256(x).hexdigest()
+        return hash[-3:].upper()
+
+    def is_noise(self, txt):
+        if (len(txt) >= 34):
+            try:
+                int(txt, 16)
+            except:
+                self.user_input = False
+                return False
+            else:
+                id = self.code_hashid(txt[:-3])
+                if (txt[-3:].upper() == id.upper()):
+                    self.code_id = id
+                    self.user_input = True
+                    return True
+                else:
+                    return False
+        else:
+
+            if (len(txt)>0 and txt[0]=='0'):
+                self.d.show_message(''.join(["<b>",_("Warning: "), "</b>", _("Revealers starting with 0 had a vulnerability and are not supported.")]))
+            self.user_input = False
+            return False
 
     def make_digital(self, dialog):
         self.make_rawnoise(True)
         self.bdone(dialog)
         self.d.close()
 
-    def get_path_to_revealer_file(self, ext: str= '') -> str:
-        version = self.versioned_seed.version
-        code_id = self.versioned_seed.checksum
-        filename = self.filename_prefix + version + "_" + code_id + ext
-        path = os.path.join(self.base_dir, filename)
-        return os.path.normcase(os.path.abspath(path))
-
-    def get_path_to_calibration_file(self):
-        path = os.path.join(self.base_dir, 'calibration.pdf')
-        return os.path.normcase(os.path.abspath(path))
-
     def bcrypt(self, dialog):
         self.rawnoise = False
-        version = self.versioned_seed.version
-        code_id = self.versioned_seed.checksum
-        dialog.show_message(''.join([_("{} encrypted for Revealer {}_{} saved as PNG and PDF at: ").format(self.was, version, code_id),
-                                     "<b>", self.get_path_to_revealer_file(), "</b>", "<br/>",
-                                     "<br/>", "<b>", _("Always check your backups.")]),
-                            rich_text=True)
+        dialog.show_message(''.join([_("{} encrypted for Revealer {}_{} saved as PNG and PDF at:").format(self.was, self.version, self.code_id),
+                                     "<br/>","<b>", self.base_dir+ self.filename+self.version+"_"+self.code_id,"</b>"]))
         dialog.close()
 
     def ext_warning(self, dialog):
-        dialog.show_message(''.join(["<b>",_("Warning"), ": </b>",
-                                     _("your seed extension will <b>not</b> be included in the encrypted backup.")]),
-                            rich_text=True)
+        dialog.show_message(''.join(["<b>",_("Warning: "), "</b>", _("your seed extension will not be included in the encrypted backup.")]))
         dialog.close()
 
     def bdone(self, dialog):
-        version = self.versioned_seed.version
-        code_id = self.versioned_seed.checksum
-        dialog.show_message(''.join([_("Digital Revealer ({}_{}) saved as PNG and PDF at:").format(version, code_id),
-                                     "<br/>","<b>", self.get_path_to_revealer_file(), '</b>']),
-                            rich_text=True)
+        dialog.show_message(''.join([_("Digital Revealer ({}_{}) saved as PNG and PDF at:").format(self.version, self.code_id),
+                                     "<br/>","<b>", self.base_dir + 'revealer_' +self.version + '_'+ self.code_id, '</b>']))
 
 
     def customtxt_limits(self):
         txt = self.text.text()
         self.max_chars.setVisible(False)
-        self.char_count.setText(f"({len(txt)}/{self.MAX_PLAINTEXT_LEN})")
+        self.char_count.setText("("+str(len(txt))+"/216)")
         if len(txt)>0:
             self.ctext.setEnabled(True)
-        if len(txt) > self.MAX_PLAINTEXT_LEN:
-            self.text.setPlainText(txt[:self.MAX_PLAINTEXT_LEN])
+        if len(txt) > 216:
+            self.text.setPlainText(self.text.toPlainText()[:216])
             self.max_chars.setVisible(True)
 
     def t(self):
         self.txt = self.text.text()
         self.seed_img(is_seed=False)
 
-    def warn_old_revealer(self):
-        if self.versioned_seed.version == '0':
-            link = "https://revealer.cc/revealer-warning-and-upgrade/"
-            self.d.show_warning(("<b>{warning}: </b>{ver0}<br>"
-                                 "{url}<br>"
-                                 "{risk}")
-                                .format(warning=_("Warning"),
-                                        ver0=_("Revealers starting with 0 are not secure due to a vulnerability."),
-                                        url=_("More info at: {}").format(f'<a href="{link}">{link}</a>'),
-                                        risk=_("Proceed at your own risk.")),
-                                rich_text=True)
-
     def cypherseed_dialog(self, window):
-        self.warn_old_revealer()
 
-        d = WindowModalDialog(window, "Encryption Dialog")
-        d.setMinimumWidth(500)
-        d.setMinimumHeight(210)
-        d.setMaximumHeight(450)
-        d.setContentsMargins(11, 11, 1, 1)
+        d = WindowModalDialog(window, "Revealer")
+        d.setMinimumWidth(420)
+
         self.c_dialog = d
 
-        hbox = QHBoxLayout(d)
-        self.vbox = QVBoxLayout()
+        self.vbox = QVBoxLayout(d)
+        self.vbox.addSpacing(21)
+
         logo = QLabel()
-        hbox.addWidget(logo)
-        logo.setPixmap(QPixmap(icon_path('revealer.png')))
-        logo.setAlignment(Qt.AlignLeft)
-        hbox.addSpacing(16)
-        self.vbox.addWidget(WWLabel("<b>" + _("Revealer Secret Backup Plugin") + "</b><br>"
-                               + _("Ready to encrypt for revealer {}")
-                                    .format(self.versioned_seed.version+'_'+self.versioned_seed.checksum)))
-        self.vbox.addSpacing(11)
-        hbox.addLayout(self.vbox)
+        self.vbox.addWidget(logo)
+        logo.setPixmap(QPixmap(':icons/revealer.png'))
+        logo.setAlignment(Qt.AlignCenter)
+        self.vbox.addSpacing(42)
+
         grid = QGridLayout()
         self.vbox.addLayout(grid)
 
-        cprint = QPushButton(_("Encrypt {}'s seed").format(self.wallet_name))
-        cprint.setMaximumWidth(250)
+        cprint = QPushButton(_("Generate encrypted seed backup"))
         cprint.clicked.connect(partial(self.seed_img, True))
         self.vbox.addWidget(cprint)
-        self.vbox.addSpacing(1)
-        self.vbox.addWidget(WWLabel("<b>"+_("OR")+"</b> "+_("type a custom alphanumerical secret below:")))
+        self.vbox.addSpacing(14)
+
+        self.vbox.addWidget(WWLabel(_("OR type any secret below:")))
         self.text = ScanQRTextEdit()
         self.text.setTabChangesFocus(True)
         self.text.setMaximumHeight(70)
         self.text.textChanged.connect(self.customtxt_limits)
         self.vbox.addWidget(self.text)
+
         self.char_count = WWLabel("")
         self.char_count.setAlignment(Qt.AlignRight)
         self.vbox.addWidget(self.char_count)
-        self.max_chars = WWLabel("<font color='red'>"
-                                 + _("This version supports a maximum of {} characters.").format(self.MAX_PLAINTEXT_LEN)
-                                 +"</font>")
+
+        self.max_chars = WWLabel("<font color='red'>" + _("This version supports a maximum of 216 characters.")+"</font>")
         self.vbox.addWidget(self.max_chars)
         self.max_chars.setVisible(False)
-        self.ctext = QPushButton(_("Encrypt custom secret"))
+
+        self.ctext = QPushButton(_("Generate custom secret encrypted backup"))
         self.ctext.clicked.connect(self.t)
+
         self.vbox.addWidget(self.ctext)
         self.ctext.setEnabled(False)
+
         self.vbox.addSpacing(11)
+        self.vbox.addWidget(
+                            QLabel(''.join(["<b>" + _("WARNING") + "</b>: " + _("Revealer is a one-time-pad and should be used only once."), '<br/>',
+                            _("Multiple secrets encrypted for the same Revealer can be attacked."), '<br/>',
+                            ])))
+        self.vbox.addSpacing(11)
+
+        self.vbox.addSpacing(21)
         self.vbox.addLayout(Buttons(CloseButton(d)))
         return bool(d.exec_())
 
-    def update_wallet_name(self, name):
+
+    def update_wallet_name (self, name):
         self.wallet_name = str(name)
+        self.base_name = self.base_dir + self.wallet_name
 
     def seed_img(self, is_seed = True):
 
+        if not self.cseed and self.txt == False:
+            return
+
         if is_seed:
-            try:
-                cseed = self.get_seed()
-            except UserCancelled:
-                return
-            except InvalidPassword as e:
-                self.d.show_error(str(e))
-                return
-            if not cseed:
-                self.d.show_message(_("This wallet has no seed"))
-                return
-            txt = cseed.upper()
+            txt = self.cseed
         else:
             txt = self.txt.upper()
 
-        img = QImage(self.SIZE[0], self.SIZE[1], QImage.Format_Mono)
+        img = QImage(self.size[0],self.size[1], QImage.Format_Mono)
         bitmap = QBitmap.fromImage(img, Qt.MonoOnly)
         bitmap.fill(Qt.white)
         painter = QPainter()
@@ -309,7 +282,7 @@ class Plugin(RevealerPlugin):
         else:
             fontsize = 12
             linespace = 10
-            max_letters = 21
+            max_letters = 23
             max_lines = 9
             max_words = int(max_letters/4)
 
@@ -325,7 +298,7 @@ class Plugin(RevealerPlugin):
             while len(' '.join(map(str, temp_seed))) > max_letters:
                nwords = nwords - 1
                temp_seed = seed_array[:nwords]
-            painter.drawText(QRect(0, linespace*n , self.SIZE[0], self.SIZE[1]), Qt.AlignHCenter, ' '.join(map(str, temp_seed)))
+            painter.drawText(QRect(0, linespace*n , self.size[0], self.size[1]), Qt.AlignHCenter, ' '.join(map(str, temp_seed)))
             del seed_array[:nwords]
 
         painter.end()
@@ -337,23 +310,43 @@ class Plugin(RevealerPlugin):
         return img
 
     def make_rawnoise(self, create_revealer=False):
-        if not self.user_input:
-            self.versioned_seed = self.gen_random_versioned_seed()
-        assert self.versioned_seed
-        w, h = self.SIZE
+        w = self.size[0]
+        h = self.size[1]
         rawnoise = QImage(w, h, QImage.Format_Mono)
 
-        noise_map = self.get_noise_map(self.versioned_seed)
-        for (x,y), pixel in noise_map.items():
-            rawnoise.setPixel(x, y, pixel)
+        if(self.noise_seed == False):
+            self.noise_seed = random.SystemRandom().getrandbits(128)
+            self.hex_noise = format(self.noise_seed, '032x')
+            self.hex_noise = self.version + str(self.hex_noise)
+
+        if (self.user_input == True):
+            self.noise_seed = int(self.noise_seed, 16)
+            self.hex_noise = self.version + str(format(self.noise_seed, '032x'))
+
+        self.code_id = self.code_hashid(self.hex_noise)
+        self.hex_noise = ' '.join(self.hex_noise[i:i+4] for i in range(0,len(self.hex_noise),4))
+
+        entropy = binascii.unhexlify(str(format(self.noise_seed, '032x')))
+        code_id = binascii.unhexlify(self.version + self.code_id)
+
+        drbg = DRBG(entropy + code_id)
+        noise_array=bin(int.from_bytes(drbg.generate(1929), 'big'))[2:]
+
+        i=0
+        for x in range(w):
+            for y in range(h):
+                rawnoise.setPixel(x,y,int(noise_array[i]))
+                i+=1
 
         self.rawnoise = rawnoise
-        if create_revealer:
+        if create_revealer==True:
             self.make_revealer()
+        self.noise_seed = False
 
     def make_calnoise(self):
         random.seed(self.calibration_noise)
-        w, h = self.SIZE
+        w = self.size[0]
+        h = self.size[1]
         rawnoise = QImage(w, h, QImage.Format_Mono)
         for x in range(w):
             for y in range(h):
@@ -367,10 +360,10 @@ class Plugin(RevealerPlugin):
         revealer = revealer.scaled(self.f_size, Qt.KeepAspectRatio)
         revealer = self.overlay_marks(revealer)
 
-        self.filename_prefix = 'revealer_'
-        revealer.save(self.get_path_to_revealer_file('.png'))
+        self.filename = 'Revealer - '
+        revealer.save(self.base_dir + self.filename + self.version+'_'+self.code_id + '.png')
         self.toPdf(QImage(revealer))
-        QDesktopServices.openUrl(QUrl.fromLocalFile(self.get_path_to_revealer_file('.pdf')))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(self.base_dir + self.filename + self.version+'_'+ self.code_id + '.pdf')))
 
     def make_cypherseed(self, img, rawnoise, calibration=False, is_seed = True):
         img = img.convertToFormat(QImage.Format_Mono)
@@ -385,30 +378,30 @@ class Plugin(RevealerPlugin):
         cypherseed = self.overlay_marks(cypherseed, True, calibration)
 
         if not is_seed:
-            self.filename_prefix = 'custom_secret_'
+            self.filename = _('custom_secret')+'_'
             self.was = _('Custom secret')
         else:
-            self.filename_prefix = self.wallet_name + '_seed_'
-            self.was = self.wallet_name + ' ' + _('seed')
-            if self.extension:
-                self.ext_warning(self.c_dialog)
+            self.filename = self.wallet_name+'_'+ _('seed')+'_'
+            self.was = self.wallet_name +' ' + _('seed')
 
+        if self.has_extension:
+            self.ext_warning(self.c_dialog)
 
         if not calibration:
             self.toPdf(QImage(cypherseed))
-            QDesktopServices.openUrl(QUrl.fromLocalFile(self.get_path_to_revealer_file('.pdf')))
-            cypherseed.save(self.get_path_to_revealer_file('.png'))
+            QDesktopServices.openUrl (QUrl.fromLocalFile(os.path.abspath(self.base_dir+self.filename+self.version+'_'+self.code_id+'.pdf')))
+            cypherseed.save(self.base_dir + self.filename +self.version + '_'+ self.code_id + '.png')
             self.bcrypt(self.c_dialog)
         return cypherseed
 
     def calibration(self):
-        img = QImage(self.SIZE[0], self.SIZE[1], QImage.Format_Mono)
+        img = QImage(self.size[0],self.size[1], QImage.Format_Mono)
         bitmap = QBitmap.fromImage(img, Qt.MonoOnly)
         bitmap.fill(Qt.black)
         self.make_calnoise()
         img = self.overlay_marks(self.calnoise.scaledToHeight(self.f_size.height()), False, True)
         self.calibration_pdf(img)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(self.get_path_to_calibration_file()))
+        QDesktopServices.openUrl (QUrl.fromLocalFile(os.path.abspath(self.base_dir+_('calibration')+'.pdf')))
         return img
 
     def toPdf(self, image):
@@ -416,7 +409,7 @@ class Plugin(RevealerPlugin):
         printer.setPaperSize(QSizeF(210, 297), QPrinter.Millimeter)
         printer.setResolution(600)
         printer.setOutputFormat(QPrinter.PdfFormat)
-        printer.setOutputFileName(self.get_path_to_revealer_file('.pdf'))
+        printer.setOutputFileName(self.base_dir+self.filename+self.version + '_'+self.code_id+'.pdf')
         printer.setPageMargins(0,0,0,0,6)
         painter = QPainter()
         painter.begin(printer)
@@ -441,7 +434,7 @@ class Plugin(RevealerPlugin):
         printer.setPaperSize(QSizeF(210, 297), QPrinter.Millimeter)
         printer.setResolution(600)
         printer.setOutputFormat(QPrinter.PdfFormat)
-        printer.setOutputFileName(self.get_path_to_calibration_file())
+        printer.setOutputFileName(self.base_dir+_('calibration')+'.pdf')
         printer.setPageMargins(0,0,0,0,6)
 
         painter = QPainter()
@@ -557,7 +550,7 @@ class Plugin(RevealerPlugin):
                 painter.drawLine(base_img.width()-(dist_h), 0,  base_img.width()-(dist_h), base_img.height())
 
                 painter.drawImage(((total_distance_h))+11, ((total_distance_h))+11,
-                                  QImage(icon_path('electrumb.png')).scaledToWidth(2.1*(total_distance_h), Qt.SmoothTransformation))
+                                  QImage(':icons/electrumb.png').scaledToWidth(2.1*(total_distance_h), Qt.SmoothTransformation))
 
                 painter.setPen(QPen(Qt.white, border_thick*8))
                 painter.drawLine(base_img.width()-((total_distance_h))-(border_thick*8)/2-(border_thick/2)-2,
@@ -566,8 +559,7 @@ class Plugin(RevealerPlugin):
                                 (base_img.height()-((total_distance_h)))-((border_thick*8)/2)-(border_thick/2)-2)
                 painter.setPen(QColor(0,0,0,255))
                 painter.drawText(QRect(0, base_img.height()-107, base_img.width()-total_distance_h - border_thick - 11,
-                                       base_img.height()-total_distance_h - border_thick), Qt.AlignRight,
-                                 self.versioned_seed.version + '_'+self.versioned_seed.checksum)
+                                       base_img.height()-total_distance_h - border_thick), Qt.AlignRight, self.version + '_'+self.code_id)
                 painter.end()
 
             else: # revealer
@@ -583,7 +575,7 @@ class Plugin(RevealerPlugin):
                 painter.drawLine(dist_h, 0,  dist_h, base_img.height())
                 painter.drawLine(0, base_img.height()-dist_v, base_img.width(), base_img.height()-(dist_v))
                 painter.drawLine(base_img.width()-(dist_h), 0,  base_img.width()-(dist_h), base_img.height())
-                logo = QImage(icon_path('revealer_c.png')).scaledToWidth(1.3*(total_distance_h))
+                logo = QImage(':icons/revealer_c.png').scaledToWidth(1.3*(total_distance_h))
                 painter.drawImage((total_distance_h)+ (border_thick), ((total_distance_h))+ (border_thick), logo, Qt.SmoothTransformation)
 
                 #frame around logo
@@ -616,13 +608,12 @@ class Plugin(RevealerPlugin):
                 painter.setPen(QColor(0,0,0,255))
                 painter.drawText(QRect(((base_img.width()/2) +21)-qr_size, base_img.height()-107,
                                        base_img.width()-total_distance_h - border_thick -93,
-                                       base_img.height()-total_distance_h - border_thick), Qt.AlignLeft, self.versioned_seed.get_ui_string_version_plus_seed())
+                                       base_img.height()-total_distance_h - border_thick), Qt.AlignLeft, self.hex_noise.upper())
                 painter.drawText(QRect(0, base_img.height()-107, base_img.width()-total_distance_h - border_thick -3 -qr_size,
-                                       base_img.height()-total_distance_h - border_thick), Qt.AlignRight, self.versioned_seed.checksum)
+                                       base_img.height()-total_distance_h - border_thick), Qt.AlignRight, self.code_id)
 
                 # draw qr code
-                qr_qt = self.paintQR(self.versioned_seed.get_ui_string_version_plus_seed()
-                                     + self.versioned_seed.checksum)
+                qr_qt = self.paintQR(self.hex_noise.upper() +self.code_id)
                 target = QRectF(base_img.width()-65-qr_size,
                                 base_img.height()-65-qr_size,
                                 qr_size, qr_size )

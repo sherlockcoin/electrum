@@ -1,8 +1,4 @@
-from kivy.properties import ObjectProperty, OptionProperty
-from kivy.factory import Factory
-
-
-class NFCTransactionDialog(Factory.AnimatedPopup):
+class NFCTransactionDialog(AnimatedPopup):
 
     mode = OptionProperty('send', options=('send','receive'))
 
@@ -23,14 +19,14 @@ class NFCTransactionDialog(Factory.AnimatedPopup):
         sctr = self.ids.sctr
         if value:
             def _cmp(*l):
-                anim = Factory.Animation(rotation=2, scale=1, opacity=1)
+                anim = Animation(rotation=2, scale=1, opacity=1)
                 anim.start(sctr)
                 anim.bind(on_complete=_start)
 
             def _start(*l):
-                anim = Factory.Animation(rotation=350, scale=2, opacity=0)
+                anim = Animation(rotation=350, scale=2, opacity=0)
                 anim.start(sctr)
                 anim.bind(on_complete=_cmp)
             _start()
             return
-        Factory.Animation.cancel_all(sctr)
+        Animation.cancel_all(sctr)

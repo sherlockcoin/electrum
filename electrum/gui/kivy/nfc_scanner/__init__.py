@@ -1,7 +1,3 @@
-from kivy.uix.widget import Widget
-from kivy.properties import ObjectProperty
-from kivy.core import core_select_lib
-
 __all__ = ('NFCBase', 'NFCScanner')
 
 class NFCBase(Widget):

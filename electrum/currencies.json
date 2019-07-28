@@ -109,7 +109,6 @@
         "NZD",
         "OMR",
         "PAB",
-        "PAX",
         "PEN",
         "PGK",
         "PHP",
@@ -150,7 +149,6 @@
         "UYU",
         "UZS",
         "VEF",
-        "VES",
         "VND",
         "VUV",
         "WST",
@@ -166,8 +164,7 @@
         "ZWL"
     ],
     "BitStamp": [
-        "USD",
-        "EUR"
+        "USD"
     ],
     "Bitbank": [
         "JPY"
@@ -323,7 +320,7 @@
         "USD",
         "UYU",
         "UZS",
-        "VES",
+        "VEF",
         "VND",
         "VUV",
         "WST",
@@ -341,18 +338,18 @@
         "ZMW",
         "ZWL"
     ],
-    "BitcoinVenezuela": [
-        "ARS",
-        "ETH",
-        "EUR",
-        "LTC",
-        "USD",
-        "VEF",
-        "XMR"
-    ],
     "Bitcointoyou": [
         "BRL"
+    ],
+    "BitcoinVenezuela": [
+        "ARS",
+        "EUR",
+        "USD",
+        "VEF"
     ],    
+    "Bitmarket": [
+        "PLN"
+    ],
     "Bitso": [
         "MXN"
     ],
@@ -381,12 +378,6 @@
         "SGD",
         "THB",
         "TWD",
-        "USD"
-    ],
-    "Bylls": [
-        "CAD"
-    ],
-    "CoinCap": [
         "USD"
     ],
     "CoinDesk": [
@@ -558,62 +549,6 @@
         "ZMW",
         "ZWL"
     ],
-    "CoinGecko": [
-        "AED",
-        "ARS",
-        "AUD",
-        "BCH",
-        "BDT",
-        "BHD",
-        "BMD",
-        "BNB",
-        "BRL",
-        "BTC",
-        "CAD",
-        "CHF",
-        "CLP",
-        "CNY",
-        "CZK",
-        "DKK",
-        "EOS",
-        "ETH",
-        "EUR",
-        "GBP",
-        "HKD",
-        "HUF",
-        "IDR",
-        "ILS",
-        "INR",
-        "JPY",
-        "KRW",
-        "KWD",
-        "LKR",
-        "LTC",
-        "MMK",
-        "MXN",
-        "MYR",
-        "NOK",
-        "NZD",
-        "PHP",
-        "PKR",
-        "PLN",
-        "RUB",
-        "SAR",
-        "SEK",
-        "SGD",
-        "THB",
-        "TRY",
-        "TWD",
-        "USD",
-        "VEF",
-        "VND",
-        "XAG",
-        "XAU",
-        "XDR",
-        "XLM",
-        "XRP",
-        "ZAR"
-    ],
     "Coinbase": [
         "AED",
         "AFN",
@@ -626,7 +561,6 @@
         "AWG",
         "AZN",
         "BAM",
-        "BAT",
         "BBD",
         "BCH",
         "BDT",
@@ -638,8 +572,6 @@
         "BOB",
         "BRL",
         "BSD",
-        "BSV",
-        "BTC",
         "BTN",
         "BWP",
         "BYN",
@@ -665,7 +597,6 @@
         "EGP",
         "ERN",
         "ETB",
-        "ETC",
         "ETH",
         "EUR",
         "FJD",
@@ -787,11 +718,12 @@
         "XPT",
         "YER",
         "ZAR",
-        "ZEC",
         "ZMK",
         "ZMW",
-        "ZRX",
         "ZWL"
+    ],
+    "Foxbit": [
+        "BRL"
     ],
     "Kraken": [
         "CAD",
@@ -804,9 +736,8 @@
         "AED",
         "ARS",
         "AUD",
-        "BAM",
         "BDT",
-        "BGN",
+        "BHD",
         "BOB",
         "BRL",
         "BWP",
@@ -826,9 +757,7 @@
         "GBP",
         "GEL",
         "GHS",
-        "GTQ",
         "HKD",
-        "HNL",
         "HRK",
         "HUF",
         "IDR",
@@ -848,36 +777,33 @@
         "NGN",
         "NOK",
         "NZD",
-        "OMR",
         "PAB",
         "PEN",
         "PHP",
         "PKR",
         "PLN",
-        "QAR",
+        "PYG",
         "RON",
         "RSD",
         "RUB",
-        "RWF",
         "SAR",
         "SEK",
         "SGD",
         "SZL",
         "THB",
         "TRY",
-        "TTD",
         "TWD",
         "TZS",
         "UAH",
         "UGX",
         "USD",
         "UYU",
-        "VES",
+        "VEF",
         "VND",
         "XAF",
-        "XMR",
         "XRP",
-        "ZAR"
+        "ZAR",
+        "ZMW"
     ],
     "MercadoBitcoin": [
         "BRL"
@@ -888,8 +814,10 @@
     "TheRockTrading": [
         "EUR"
     ],
-    "Zaif": [
-        "JPY"
+    "WEX": [
+        "EUR",
+        "RUB",
+        "USD"
     ],
     "itBit": []
 }

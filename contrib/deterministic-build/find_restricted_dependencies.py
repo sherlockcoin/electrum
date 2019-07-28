@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 import sys
 
-try:
-    import requests
-except ImportError as e:
-    sys.exit(f"Error: {str(e)}. Try 'sudo python3 -m pip install <module-name>'")
+import requests
 
 
 def check_restriction(p, r):

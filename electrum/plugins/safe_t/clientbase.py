@@ -1,12 +1,10 @@
 import time
 from struct import pack
 
-from electrum import ecc
 from electrum.i18n import _
-from electrum.util import UserCancelled
+from electrum.util import PrintError, UserCancelled
 from electrum.keystore import bip39_normalize_passphrase
-from electrum.bip32 import BIP32Node, convert_bip32_path_to_list_of_uint32
-from electrum.logging import Logger
+from electrum.bitcoin import serialize_xpub, convert_bip32_path_to_list_of_uint32
 
 
 class GuiMixin(object):
@@ -96,7 +94,7 @@ class GuiMixin(object):
         return self.proto.WordAck(word=word)
 
 
-class SafeTClientBase(GuiMixin, Logger):
+class SafeTClientBase(GuiMixin, PrintError):
 
     def __init__(self, handler, plugin, proto):
         assert hasattr(self, 'tx_api')  # ProtocolMixin already constructed?
@@ -107,7 +105,6 @@ class SafeTClientBase(GuiMixin, Logger):
         self.types = plugin.types
         self.msg = None
         self.creating_wallet = False
-        Logger.__init__(self)
         self.used()
 
     def __str__(self):
@@ -141,7 +138,7 @@ class SafeTClientBase(GuiMixin, Logger):
     def timeout(self, cutoff):
         '''Time out the client if the last operation was before cutoff.'''
         if self.last_operation < cutoff:
-            self.logger.info("timed out")
+            self.print_error("timed out")
             self.clear_session()
 
     @staticmethod
@@ -159,12 +156,7 @@ class SafeTClientBase(GuiMixin, Logger):
         address_n = self.expand_path(bip32_path)
         creating = False
         node = self.get_public_node(address_n, creating).node
-        return BIP32Node(xtype=xtype,
-                         eckey=ecc.ECPubkey(node.public_key),
-                         chaincode=node.chain_code,
-                         depth=node.depth,
-                         fingerprint=self.i4b(node.fingerprint),
-                         child_number=self.i4b(node.child_num)).to_xpub()
+        return serialize_xpub(xtype, node.chain_code, node.public_key, node.depth, self.i4b(node.fingerprint), self.i4b(node.child_num))
 
     def toggle_passphrase(self):
         if self.features.passphrase_protection:
@@ -194,13 +186,13 @@ class SafeTClientBase(GuiMixin, Logger):
     def clear_session(self):
         '''Clear the session to force pin (and passphrase if enabled)
         re-entry.  Does not leak exceptions.'''
-        self.logger.info(f"clear session: {self}")
+        self.print_error("clear session:", self)
         self.prevent_timeouts()
         try:
             super(SafeTClientBase, self).clear_session()
         except BaseException as e:
             # If the device was removed it has the same effect...
-            self.logger.info(f"clear_session: ignoring error {e}")
+            self.print_error("clear_session: ignoring error", str(e))
 
     def get_public_node(self, address_n, creating):
         self.creating_wallet = creating
@@ -208,7 +200,7 @@ class SafeTClientBase(GuiMixin, Logger):
 
     def close(self):
         '''Called when Our wallet was closed or the device removed.'''
-        self.logger.info("closing client")
+        self.print_error("closing client")
         self.clear_session()
         # Release the device
         self.transport.close()

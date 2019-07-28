@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 
 import sys
-import asyncio
-
-from electrum.network import Network
-from electrum.util import print_msg, create_and_start_event_loop
-from electrum.synchronizer import SynchronizerBase
-
+import time
+from electrum import bitcoin
+from .. import SimpleConfig, Network
+from electrum.util import print_msg, json_encode
 
 try:
     addr = sys.argv[1]
@@ -14,31 +12,25 @@ except Exception:
     print("usage: watch_address <bitcoin_address>")
     sys.exit(1)
 
+sh = bitcoin.address_to_scripthash(addr)
+
 # start network
-loop = create_and_start_event_loop()[0]
-network = Network()
+c = SimpleConfig()
+network = Network(c)
 network.start()
 
+# wait until connected
+while network.is_connecting():
+    time.sleep(0.1)
 
-class Notifier(SynchronizerBase):
-    def __init__(self, network):
-        SynchronizerBase.__init__(self, network)
-        self.watched_addresses = set()
-        self.watch_queue = asyncio.Queue()
+if not network.is_connected():
+    print_msg("daemon is not connected")
+    sys.exit(1)
 
-    async def main(self):
-        # resend existing subscriptions if we were restarted
-        for addr in self.watched_addresses:
-            await self._add_address(addr)
-        # main loop
-        while True:
-            addr = await self.watch_queue.get()
-            self.watched_addresses.add(addr)
-            await self._add_address(addr)
+# 2. send the subscription
+callback = lambda response: print_msg(json_encode(response.get('result')))
+network.subscribe_to_address(addr, callback)
 
-    async def _on_address_status(self, addr, status):
-        print_msg(f"addr {addr}, status {status}")
-
-
-notifier = Notifier(network)
-asyncio.run_coroutine_threadsafe(notifier.watch_queue.put(addr), loop)
+# 3. wait for results
+while network.is_connected():
+    time.sleep(1)

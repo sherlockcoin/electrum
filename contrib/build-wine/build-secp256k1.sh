@@ -3,14 +3,6 @@
 
 set -e
 
-here="$(dirname "$(readlink -e "$0")")"
-LIBSECP_VERSION="b408c6a8b287003d1ade5709e6f7bc3c7f1d5be7"
-
-. "$CONTRIB"/build_tools_util.sh
-
-info "building libsecp256k1..."
-
-
 build_dll() {
     #sudo apt-get install -y mingw-w64
     export SOURCE_DATE_EPOCH=1530212462
@@ -22,31 +14,27 @@ build_dll() {
         --enable-experimental \
         --enable-module-ecdh \
         --disable-jni
-    make -j4
+    make
     ${1}-strip .libs/libsecp256k1-0.dll
 }
 
 
-cd "$CACHEDIR"
-
-if [ -f "secp256k1/libsecp256k1.dll" ]; then
-    info "libsecp256k1.dll already built, skipping"
-    exit 0
-fi
-
+cd /tmp/electrum-build
 
 if [ ! -d secp256k1 ]; then
     git clone https://github.com/bitcoin-core/secp256k1.git
+    cd secp256k1;
+else
+    cd secp256k1
+    git pull
 fi
 
-cd secp256k1
-git reset --hard
+git reset --hard 452d8e4d2a2f9f1b5be6b02e18f1ba102e5ca0b4
 git clean -f -x -q
-git checkout $LIBSECP_VERSION
 
 build_dll i686-w64-mingw32  # 64-bit would be: x86_64-w64-mingw32
 mv .libs/libsecp256k1-0.dll libsecp256k1.dll
 
 find -exec touch -d '2000-11-11T11:11:11+00:00' {} +
 
-info "building libsecp256k1 finished"
+echo "building libsecp256k1 finished"

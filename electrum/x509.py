@@ -22,20 +22,11 @@
 # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
-import hashlib
-import time
-from datetime import datetime
-
-import ecdsa
-
 from . import util
 from .util import profiler, bh2u
-from .logging import get_logger
-
-
-_logger = get_logger(__name__)
-
+import ecdsa
+import hashlib
+import time
 
 # algo OIDs
 ALGO_RSA_SHA1 = '1.2.840.113549.1.1.5'
@@ -309,8 +300,7 @@ class X509(object):
         if self.notBefore > now:
             raise CertificateError('Certificate has not entered its valid date range. (%s)' % self.get_common_name())
         if self.notAfter <= now:
-            dt = datetime.utcfromtimestamp(time.mktime(self.notAfter))
-            raise CertificateError(f'Certificate ({self.get_common_name()}) has expired (at {dt} UTC).')
+            raise CertificateError('Certificate has expired. (%s)' % self.get_common_name())
 
     def getFingerprint(self):
         return hashlib.sha1(self.bytes).digest()
@@ -332,7 +322,7 @@ def load_certificates(ca_path):
         except BaseException as e:
             # with open('/tmp/tmp.txt', 'w') as f:
             #     f.write(pem.pem(b, 'CERTIFICATE').decode('ascii'))
-            _logger.info(f"cert error: {e}")
+            util.print_error("cert error:", e)
             continue
 
         fp = x.getFingerprint()
@@ -343,7 +333,8 @@ def load_certificates(ca_path):
 
 
 if __name__ == "__main__":
-    import certifi
+    import requests
 
-    ca_path = certifi.where()
+    util.set_verbosity(True)
+    ca_path = requests.certs.where()
     ca_list, ca_keyID = load_certificates(ca_path)

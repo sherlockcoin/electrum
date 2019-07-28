@@ -10,11 +10,9 @@ from numbers import Real
 from copy import deepcopy
 
 from . import util
-from .util import (user_dir, make_dir,
+from .util import (user_dir, print_error, PrintError, make_dir,
                    NoDynamicFeeEstimates, format_fee_satoshis, quantize_feerate)
 from .i18n import _
-from .logging import get_logger, Logger
-
 
 FEE_ETA_TARGETS = [25, 10, 5, 2]
 FEE_DEPTH_TARGETS = [10000000, 5000000, 2000000, 1000000, 500000, 200000, 100000]
@@ -24,12 +22,10 @@ FEERATE_MAX_DYNAMIC = 1500000
 FEERATE_WARNING_HIGH_FEE = 600000
 FEERATE_FALLBACK_STATIC_FEE = 150000
 FEERATE_DEFAULT_RELAY = 1000
-FEERATE_STATIC_VALUES = [1000, 2000, 5000, 10000, 20000, 30000,
-                         50000, 70000, 100000, 150000, 200000, 300000]
+FEERATE_STATIC_VALUES = [5000, 10000, 20000, 30000, 50000, 70000, 100000, 150000, 200000, 300000]
 
 
 config = None
-_logger = get_logger(__name__)
 
 
 def get_config():
@@ -45,7 +41,7 @@ def set_config(c):
 FINAL_CONFIG_VERSION = 3
 
 
-class SimpleConfig(Logger):
+class SimpleConfig(PrintError):
     """
     The SimpleConfig class is responsible for handling operations involving
     configuration files.
@@ -61,8 +57,6 @@ class SimpleConfig(Logger):
 
         if options is None:
             options = {}
-
-        Logger.__init__(self)
 
         # This lock needs to be acquired for updating and reading the config in
         # a thread-safe way.
@@ -124,7 +118,7 @@ class SimpleConfig(Logger):
             path = os.path.join(path, 'simnet')
             make_dir(path, allow_symlink=False)
 
-        self.logger.info(f"electrum directory {path}")
+        self.print_error("electrum directory", path)
         return path
 
     def rename_config_keys(self, config, keypairs, deprecation_warning=False):
@@ -135,21 +129,15 @@ class SimpleConfig(Logger):
                 if new_key not in config:
                     config[new_key] = config[old_key]
                     if deprecation_warning:
-                        self.logger.warning('Note that the {} variable has been deprecated. '
-                                            'You should use {} instead.'.format(old_key, new_key))
+                        self.print_stderr('Note that the {} variable has been deprecated. '
+                                     'You should use {} instead.'.format(old_key, new_key))
                 del config[old_key]
                 updated = True
         return updated
 
     def set_key(self, key, value, save=True):
         if not self.is_modifiable(key):
-            self.logger.warning(f"not changing config key '{key}' set on the command line")
-            return
-        try:
-            json.dumps(key)
-            json.dumps(value)
-        except:
-            self.logger.info(f"json error: cannot save {repr(key)} ({repr(value)})")
+            self.print_stderr("Warning: not changing config key '%s' set on the command line" % key)
             return
         self._set_key_in_user_config(key, value, save)
 
@@ -174,7 +162,7 @@ class SimpleConfig(Logger):
 
     def upgrade(self):
         with self.lock:
-            self.logger.info('upgrading config')
+            self.print_error('upgrading config')
 
             self.convert_version_2()
             self.convert_version_3()
@@ -227,8 +215,8 @@ class SimpleConfig(Logger):
     def get_config_version(self):
         config_version = self.get('config_version', 1)
         if config_version > FINAL_CONFIG_VERSION:
-            self.logger.warning('config version ({}) is higher than latest ({})'
-                                .format(config_version, FINAL_CONFIG_VERSION))
+            self.print_stderr('WARNING: config version ({}) is higher than ours ({})'
+                             .format(config_version, FINAL_CONFIG_VERSION))
         return config_version
 
     def is_modifiable(self, key):
@@ -281,7 +269,7 @@ class SimpleConfig(Logger):
             self.set_key('recently_open', recent)
 
     def set_session_timeout(self, seconds):
-        self.logger.info(f"session timeout -> {seconds} seconds")
+        self.print_error("session timeout -> %d seconds" % seconds)
         self.set_key('session_timeout', seconds)
 
     def get_session_timeout(self):
@@ -408,14 +396,11 @@ class SimpleConfig(Logger):
         """Returns (text, tooltip) where
         text is what we target: static fee / num blocks to confirm in / mempool depth
         tooltip is the corresponding estimate (e.g. num blocks for a static fee)
-
-        fee_rate is in sat/kbyte
         """
         if fee_rate is None:
             rate_str = 'unknown'
         else:
-            fee_rate = fee_rate/1000
-            rate_str = format_fee_satoshis(fee_rate) + ' sat/byte'
+            rate_str = format_fee_satoshis(fee_rate/1000) + ' sat/byte'
 
         if dyn:
             if mempool:
@@ -458,7 +443,7 @@ class SimpleConfig(Logger):
         else:
             fee_rate = self.fee_per_kb(dyn=False)
             pos = self.static_fee_index(fee_rate)
-            maxp = len(FEERATE_STATIC_VALUES) - 1
+            maxp = 9
         return maxp, pos, fee_rate
 
     def static_fee(self, i):
@@ -533,16 +518,14 @@ class SimpleConfig(Logger):
         fee_per_kb = self.fee_per_kb()
         return fee_per_kb / 1000 if fee_per_kb is not None else None
 
-    def estimate_fee(self, size: Union[int, float, Decimal]) -> int:
+    def estimate_fee(self, size):
         fee_per_kb = self.fee_per_kb()
         if fee_per_kb is None:
             raise NoDynamicFeeEstimates()
         return self.estimate_fee_for_feerate(fee_per_kb, size)
 
     @classmethod
-    def estimate_fee_for_feerate(cls, fee_per_kb: Union[int, float, Decimal],
-                                 size: Union[int, float, Decimal]) -> int:
-        size = Decimal(size)
+    def estimate_fee_for_feerate(cls, fee_per_kb, size):
         fee_per_kb = Decimal(fee_per_kb)
         fee_per_byte = fee_per_kb / 1000
         # to be consistent with what is displayed in the GUI,
@@ -583,7 +566,7 @@ def read_user_config(path):
             data = f.read()
         result = json.loads(data)
     except:
-        _logger.warning(f"Cannot read config file. {config_path}")
+        print_error("Warning: Cannot read config file.", config_path)
         return {}
     if not type(result) is dict:
         return {}

@@ -1,5 +1,5 @@
 from .version import ELECTRUM_VERSION
-from .util import format_satoshis
+from .util import format_satoshis, print_msg, print_error, set_verbosity
 from .wallet import Wallet
 from .storage import WalletStorage
 from .coinchooser import COIN_CHOOSERS
@@ -12,6 +12,3 @@ from . import daemon
 from .transaction import Transaction
 from .plugin import BasePlugin
 from .commands import Commands, known_commands
-
-
-__version__ = ELECTRUM_VERSION
